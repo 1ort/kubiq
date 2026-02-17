@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 k8s-openapi = { version = "0.24", features = ["v1_30"] }
 kube = { version = "0.98", features = ["client", "derive", "runtime", "rustls-tls", "http-proxy"] }
 nom = "7"
