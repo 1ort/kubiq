@@ -13,6 +13,7 @@ use tokio::runtime::Runtime;
 use crate::dynamic_object::DynamicObject as EngineObject;
 
 const LIST_PAGE_SIZE: u32 = 500;
+const MAX_LIST_PAGES: usize = 10_000;
 
 pub fn list(resource: &str) -> Result<Vec<EngineObject>, String> {
     let resource = resource.trim();
@@ -38,8 +39,16 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
 
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
+    let mut page_count: usize = 0;
 
     loop {
+        page_count += 1;
+        if page_count > MAX_LIST_PAGES {
+            return Err(format!(
+                "pagination for resource '{resource}' exceeded max pages ({MAX_LIST_PAGES})"
+            ));
+        }
+
         let params = build_list_params(LIST_PAGE_SIZE, continue_token.as_deref());
         let mut page = api
             .list(&params)
@@ -181,7 +190,7 @@ fn flatten_value(
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{build_list_params, flatten_value};
+    use super::{MAX_LIST_PAGES, build_list_params, flatten_value};
 
     #[test]
     fn flattens_nested_objects_to_dot_paths() {
@@ -218,5 +227,10 @@ mod tests {
         let params = build_list_params(250, None);
         assert_eq!(params.limit, Some(250));
         assert_eq!(params.continue_token, None);
+    }
+
+    #[test]
+    fn max_pages_guard_is_sane_for_large_clusters() {
+        assert!(MAX_LIST_PAGES >= 10_000);
     }
 }
