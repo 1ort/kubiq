@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+use serde_json::Value;
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DynamicObject {
-    pub fields: BTreeMap<String, String>,
+    pub fields: BTreeMap<String, Value>,
 }
 
 impl DynamicObject {
     pub fn get(
         &self,
         path: &str,
-    ) -> Option<&str> {
-        self.fields.get(path).map(String::as_str)
+    ) -> Option<&Value> {
+        self.fields.get(path)
     }
 }

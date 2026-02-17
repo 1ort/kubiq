@@ -98,7 +98,7 @@ fn dynamic_to_engine_object(object: DynamicObject) -> EngineObject {
 fn flatten_value(
     path: &str,
     value: &Value,
-    out: &mut BTreeMap<String, String>,
+    out: &mut BTreeMap<String, Value>,
 ) {
     match value {
         Value::Object(map) => {
@@ -122,22 +122,22 @@ fn flatten_value(
             }
 
             if !path.is_empty() {
-                out.insert(path.to_string(), value.to_string());
+                out.insert(path.to_string(), value.clone());
             }
         }
         Value::String(string) => {
             if !path.is_empty() {
-                out.insert(path.to_string(), string.clone());
+                out.insert(path.to_string(), Value::String(string.clone()));
             }
         }
         Value::Bool(boolean) => {
             if !path.is_empty() {
-                out.insert(path.to_string(), boolean.to_string());
+                out.insert(path.to_string(), Value::Bool(*boolean));
             }
         }
         Value::Number(number) => {
             if !path.is_empty() {
-                out.insert(path.to_string(), number.to_string());
+                out.insert(path.to_string(), Value::Number(number.clone()));
             }
         }
         Value::Null => {}
@@ -146,7 +146,7 @@ fn flatten_value(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::flatten_value;
 
@@ -166,10 +166,10 @@ mod tests {
         flatten_value("", &value, &mut out);
 
         assert_eq!(
-            out.get("metadata.namespace").map(String::as_str),
-            Some("demo-a")
+            out.get("metadata.namespace"),
+            Some(&Value::String("demo-a".to_string()))
         );
-        assert_eq!(out.get("spec.replicas").map(String::as_str), Some("2"));
-        assert_eq!(out.get("spec.enabled").map(String::as_str), Some("true"));
+        assert_eq!(out.get("spec.replicas"), Some(&Value::from(2)));
+        assert_eq!(out.get("spec.enabled"), Some(&Value::Bool(true)));
     }
 }

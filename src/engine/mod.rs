@@ -1,6 +1,7 @@
 use crate::{dynamic_object::DynamicObject, parser};
+use serde_json::Value;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QueryPlan {
     pub predicates: Vec<parser::Predicate>,
 }
@@ -27,18 +28,32 @@ fn matches_all(
     predicates: &[parser::Predicate],
 ) -> bool {
     predicates.iter().all(|predicate| {
-        let value = object.get(&predicate.path);
+        let value = object.get(&predicate.path).and_then(|value| comparable_eq(value, &predicate.value));
 
         match predicate.op {
-            parser::Operator::Eq => value == Some(predicate.value.as_str()),
-            parser::Operator::Ne => value.is_some_and(|actual| actual != predicate.value),
+            parser::Operator::Eq => value == Some(true),
+            parser::Operator::Ne => value == Some(false),
         }
     })
+}
+
+fn comparable_eq(
+    actual: &Value,
+    expected: &Value,
+) -> Option<bool> {
+    match (actual, expected) {
+        (Value::String(left), Value::String(right)) => Some(left == right),
+        (Value::Number(left), Value::Number(right)) => Some(left == right),
+        (Value::Bool(left), Value::Bool(right)) => Some(left == right),
+        (Value::Null, _) | (_, Value::Null) => None,
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use serde_json::Value;
 
     use crate::{
         dynamic_object::DynamicObject,
@@ -50,16 +65,22 @@ mod tests {
     #[test]
     fn keeps_only_matching_objects() {
         let mut fields_ok = BTreeMap::new();
-        fields_ok.insert("metadata.namespace".to_string(), "default".to_string());
+        fields_ok.insert(
+            "metadata.namespace".to_string(),
+            Value::String("default".to_string()),
+        );
 
         let mut fields_bad = BTreeMap::new();
-        fields_bad.insert("metadata.namespace".to_string(), "kube-system".to_string());
+        fields_bad.insert(
+            "metadata.namespace".to_string(),
+            Value::String("kube-system".to_string()),
+        );
 
         let plan = QueryPlan {
             predicates: vec![Predicate {
                 path: "metadata.namespace".to_string(),
                 op: Operator::Eq,
-                value: "default".to_string(),
+                value: Value::String("default".to_string()),
             }],
         };
 
@@ -77,7 +98,10 @@ mod tests {
     #[test]
     fn missing_field_does_not_match_eq_or_ne() {
         let mut fields = BTreeMap::new();
-        fields.insert("metadata.namespace".to_string(), "default".to_string());
+        fields.insert(
+            "metadata.namespace".to_string(),
+            Value::String("default".to_string()),
+        );
 
         let object = DynamicObject { fields };
 
@@ -85,7 +109,7 @@ mod tests {
             predicates: vec![Predicate {
                 path: "spec.nodeName".to_string(),
                 op: Operator::Eq,
-                value: "worker-1".to_string(),
+                value: Value::String("worker-1".to_string()),
             }],
         };
 
@@ -93,7 +117,33 @@ mod tests {
             predicates: vec![Predicate {
                 path: "spec.nodeName".to_string(),
                 op: Operator::Ne,
-                value: "worker-1".to_string(),
+                value: Value::String("worker-1".to_string()),
+            }],
+        };
+
+        assert!(evaluate(&eq_plan, std::slice::from_ref(&object)).is_empty());
+        assert!(evaluate(&ne_plan, &[object]).is_empty());
+    }
+
+    #[test]
+    fn type_mismatch_does_not_match_eq_or_ne() {
+        let mut fields = BTreeMap::new();
+        fields.insert("spec.replicas".to_string(), Value::from(2));
+        let object = DynamicObject { fields };
+
+        let eq_plan = QueryPlan {
+            predicates: vec![Predicate {
+                path: "spec.replicas".to_string(),
+                op: Operator::Eq,
+                value: Value::String("2".to_string()),
+            }],
+        };
+
+        let ne_plan = QueryPlan {
+            predicates: vec![Predicate {
+                path: "spec.replicas".to_string(),
+                op: Operator::Ne,
+                value: Value::String("2".to_string()),
             }],
         };
 

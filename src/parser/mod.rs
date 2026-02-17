@@ -1,13 +1,15 @@
-#[derive(Clone, Debug, PartialEq, Eq)]
+use serde_json::Value;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct QueryAst {
     pub predicates: Vec<Predicate>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Predicate {
     pub path: String,
     pub op: Operator,
-    pub value: String,
+    pub value: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,7 +39,7 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
             predicates.push(Predicate {
                 path: left.trim().to_string(),
                 op: Operator::Eq,
-                value: right.trim().trim_matches('\'').to_string(),
+                value: parse_value(right.trim())?,
             });
             continue;
         }
@@ -46,7 +48,7 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
             predicates.push(Predicate {
                 path: left.trim().to_string(),
                 op: Operator::Ne,
-                value: right.trim().trim_matches('\'').to_string(),
+                value: parse_value(right.trim())?,
             });
             continue;
         }
@@ -55,6 +57,44 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
     }
 
     Ok(QueryAst { predicates })
+}
+
+fn parse_value(input: &str) -> Result<Value, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("predicate value is empty".to_string());
+    }
+
+    if trimmed.starts_with('\'') {
+        if !trimmed.ends_with('\'') || trimmed.len() < 2 {
+            return Err("unterminated string literal".to_string());
+        }
+        return Ok(Value::String(trimmed[1..trimmed.len() - 1].to_string()));
+    }
+
+    if trimmed.eq_ignore_ascii_case("true") {
+        return Ok(Value::Bool(true));
+    }
+
+    if trimmed.eq_ignore_ascii_case("false") {
+        return Ok(Value::Bool(false));
+    }
+
+    if let Ok(number) = trimmed.parse::<i64>() {
+        return Ok(Value::from(number));
+    }
+
+    if let Ok(number) = trimmed.parse::<u64>() {
+        return Ok(Value::from(number));
+    }
+
+    if let Ok(number) = trimmed.parse::<f64>()
+        && let Some(number) = serde_json::Number::from_f64(number)
+    {
+        return Ok(Value::Number(number));
+    }
+
+    Ok(Value::String(trimmed.to_string()))
 }
 
 fn split_and_predicates(input: &str) -> Result<Vec<&str>, String> {
@@ -101,6 +141,8 @@ fn split_and_predicates(input: &str) -> Result<Vec<&str>, String> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::{Operator, parse_query};
 
     #[test]
@@ -125,6 +167,15 @@ mod tests {
         let ast = parse_query("where metadata.name == 'a AND b' and metadata.namespace == demo-a")
             .expect("must parse valid query");
         assert_eq!(ast.predicates.len(), 2);
-        assert_eq!(ast.predicates[0].value, "a AND b");
+        assert_eq!(ast.predicates[0].value, Value::String("a AND b".to_string()));
+    }
+
+    #[test]
+    fn parses_bool_and_number_literals() {
+        let ast = parse_query("where spec.replicas == 2 AND spec.enabled == true")
+            .expect("must parse valid query");
+
+        assert_eq!(ast.predicates[0].value, Value::from(2));
+        assert_eq!(ast.predicates[1].value, Value::Bool(true));
     }
 }
