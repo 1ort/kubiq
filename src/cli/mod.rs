@@ -17,7 +17,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::MissingArgs => write!(
                 f,
-                "usage: mini-kql [--output table|json] <resource> where <predicates>"
+                "usage: mini-kql [--output table|json] [--describe] <resource> where <predicates>"
             ),
             Self::InvalidArgs(error) => write!(f, "invalid args: {error}"),
             Self::Parse(error) => write!(f, "parse error: {error}"),
@@ -31,7 +31,7 @@ impl std::error::Error for CliError {}
 
 pub fn run() -> Result<(), CliError> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let (format, args) = parse_output_format(&raw_args)?;
+    let (format, detail, args) = parse_cli_flags(&raw_args)?;
 
     if args.len() < 2 {
         return Err(CliError::MissingArgs);
@@ -48,12 +48,15 @@ pub fn run() -> Result<(), CliError> {
     let objects = k8s::list(resource).map_err(CliError::K8s)?;
     let filtered = engine::evaluate(&plan, &objects);
 
-    output::print(&filtered, format).map_err(CliError::Output)?;
+    output::print(&filtered, format, detail).map_err(CliError::Output)?;
     Ok(())
 }
 
-fn parse_output_format(args: &[String]) -> Result<(output::OutputFormat, Vec<String>), CliError> {
+fn parse_cli_flags(
+    args: &[String]
+) -> Result<(output::OutputFormat, output::DetailLevel, Vec<String>), CliError> {
     let mut format = output::OutputFormat::Table;
+    let mut detail = output::DetailLevel::Summary;
     let mut positional = Vec::new();
     let mut index = 0;
 
@@ -75,11 +78,17 @@ fn parse_output_format(args: &[String]) -> Result<(output::OutputFormat, Vec<Str
             continue;
         }
 
+        if current == "--describe" || current == "-d" {
+            detail = output::DetailLevel::Describe;
+            index += 1;
+            continue;
+        }
+
         positional.push(current.clone());
         index += 1;
     }
 
-    Ok((format, positional))
+    Ok((format, detail, positional))
 }
 
 fn parse_format(value: &str) -> Result<output::OutputFormat, CliError> {
@@ -92,4 +101,30 @@ fn parse_format(value: &str) -> Result<output::OutputFormat, CliError> {
     Err(CliError::InvalidArgs(format!(
         "unsupported output format '{value}', expected table|json"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::output::{DetailLevel, OutputFormat};
+
+    use super::parse_cli_flags;
+
+    #[test]
+    fn parses_output_and_describe_flags() {
+        let args = vec![
+            "--output".to_string(),
+            "json".to_string(),
+            "--describe".to_string(),
+            "pods".to_string(),
+            "where".to_string(),
+            "metadata.name".to_string(),
+            "==".to_string(),
+            "pod-a".to_string(),
+        ];
+
+        let (format, detail, positional) = parse_cli_flags(&args).expect("flags must parse");
+        assert_eq!(format, OutputFormat::Json);
+        assert_eq!(detail, DetailLevel::Describe);
+        assert_eq!(positional[0], "pods");
+    }
 }

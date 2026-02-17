@@ -8,41 +8,60 @@ pub enum OutputFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailLevel {
+    Summary,
+    Describe,
+}
+
 pub fn print(
     objects: &[DynamicObject],
     format: OutputFormat,
+    detail: DetailLevel,
 ) -> Result<(), String> {
     let content = match format {
-        OutputFormat::Table => render_table(objects),
-        OutputFormat::Json => render_json(objects)?,
+        OutputFormat::Table => render_table(objects, detail),
+        OutputFormat::Json => render_json(objects, detail)?,
     };
     println!("{content}");
     Ok(())
 }
 
-pub fn render_json(objects: &[DynamicObject]) -> Result<String, String> {
-    let rows: Vec<_> = objects.iter().map(|object| &object.fields).collect();
+pub fn render_json(
+    objects: &[DynamicObject],
+    detail: DetailLevel,
+) -> Result<String, String> {
+    let rows: Vec<_> = objects
+        .iter()
+        .map(|object| project_fields(object, detail))
+        .collect();
     serde_json::to_string_pretty(&rows)
         .map_err(|error| format!("failed to serialize json output: {error}"))
 }
 
-pub fn render_table(objects: &[DynamicObject]) -> String {
-    let columns = collect_columns(objects);
+pub fn render_table(
+    objects: &[DynamicObject],
+    detail: DetailLevel,
+) -> String {
+    let projected: Vec<_> = objects
+        .iter()
+        .map(|object| project_fields(object, detail))
+        .collect();
+    let columns = collect_columns(&projected);
     if columns.is_empty() {
         return "items: 0".to_string();
     }
 
-    let widths = compute_widths(objects, &columns);
+    let widths = compute_widths(&projected, &columns);
     let mut lines = Vec::new();
     lines.push(format_row(&columns, &widths));
     lines.push(format_separator(&widths));
 
-    for object in objects {
+    for fields in projected {
         let row: Vec<String> = columns
             .iter()
             .map(|column| {
-                object
-                    .fields
+                fields
                     .get(column)
                     .map(value_to_cell)
                     .unwrap_or_else(|| "-".to_string())
@@ -55,10 +74,31 @@ pub fn render_table(objects: &[DynamicObject]) -> String {
     lines.join("\n")
 }
 
-fn collect_columns(objects: &[DynamicObject]) -> Vec<String> {
+fn project_fields(
+    object: &DynamicObject,
+    detail: DetailLevel,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    match detail {
+        DetailLevel::Describe => object.fields.clone(),
+        DetailLevel::Summary => {
+            let mut projected = std::collections::BTreeMap::new();
+            let name = object
+                .fields
+                .get("metadata.name")
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::String("-".to_string()));
+            projected.insert("name".to_string(), name);
+            projected
+        }
+    }
+}
+
+fn collect_columns(
+    objects: &[std::collections::BTreeMap<String, serde_json::Value>]
+) -> Vec<String> {
     let mut set = BTreeSet::new();
-    for object in objects {
-        for key in object.fields.keys() {
+    for fields in objects {
+        for key in fields.keys() {
             set.insert(key.clone());
         }
     }
@@ -66,16 +106,15 @@ fn collect_columns(objects: &[DynamicObject]) -> Vec<String> {
 }
 
 fn compute_widths(
-    objects: &[DynamicObject],
+    objects: &[std::collections::BTreeMap<String, serde_json::Value>],
     columns: &[String],
 ) -> Vec<usize> {
     columns
         .iter()
         .map(|column| {
             let mut width = column.len();
-            for object in objects {
-                let cell = object
-                    .fields
+            for fields in objects {
+                let cell = fields
                     .get(column)
                     .map(value_to_cell)
                     .unwrap_or_else(|| "-".to_string());
@@ -134,7 +173,7 @@ mod tests {
 
     use crate::dynamic_object::DynamicObject;
 
-    use super::{render_json, render_table};
+    use super::{DetailLevel, render_json, render_table};
 
     #[test]
     fn renders_table_with_columns_and_count() {
@@ -147,7 +186,7 @@ mod tests {
             "metadata.namespace".to_string(),
             Value::String("demo-a".to_string()),
         );
-        let out = render_table(&[DynamicObject { fields }]);
+        let out = render_table(&[DynamicObject { fields }], DetailLevel::Describe);
 
         assert!(out.contains("metadata.name"));
         assert!(out.contains("metadata.namespace"));
@@ -162,9 +201,38 @@ mod tests {
             "metadata.name".to_string(),
             Value::String("pod-a".to_string()),
         );
-        let out = render_json(&[DynamicObject { fields }]).expect("json output must serialize");
+        let out = render_json(&[DynamicObject { fields }], DetailLevel::Describe)
+            .expect("json output must serialize");
 
         assert!(out.starts_with("["));
         assert!(out.contains("\"metadata.name\": \"pod-a\""));
+    }
+
+    #[test]
+    fn renders_summary_with_name_only() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.name".to_string(),
+            Value::String("pod-a".to_string()),
+        );
+        fields.insert(
+            "metadata.namespace".to_string(),
+            Value::String("demo-a".to_string()),
+        );
+
+        let table = render_table(
+            &[DynamicObject {
+                fields: fields.clone(),
+            }],
+            DetailLevel::Summary,
+        );
+        assert!(table.contains("| name"));
+        assert!(table.contains("pod-a"));
+        assert!(!table.contains("metadata.namespace"));
+
+        let json = render_json(&[DynamicObject { fields }], DetailLevel::Summary)
+            .expect("json output must serialize");
+        assert!(json.contains("\"name\": \"pod-a\""));
+        assert!(!json.contains("metadata.namespace"));
     }
 }
