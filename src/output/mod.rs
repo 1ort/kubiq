@@ -6,6 +6,7 @@ use crate::dynamic_object::DynamicObject;
 pub enum OutputFormat {
     Table,
     Json,
+    Yaml,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,6 +24,7 @@ pub fn print(
     let content = match format {
         OutputFormat::Table => render_table(objects, detail, select_paths),
         OutputFormat::Json => render_json(objects, detail, select_paths)?,
+        OutputFormat::Yaml => render_yaml(objects, detail, select_paths)?,
     };
     println!("{content}");
     Ok(())
@@ -39,6 +41,19 @@ pub fn render_json(
         .collect();
     serde_json::to_string_pretty(&rows)
         .map_err(|error| format!("failed to serialize json output: {error}"))
+}
+
+pub fn render_yaml(
+    objects: &[DynamicObject],
+    detail: DetailLevel,
+    select_paths: Option<&[String]>,
+) -> Result<String, String> {
+    let rows: Vec<_> = objects
+        .iter()
+        .map(|object| project_fields(object, detail, select_paths))
+        .collect();
+    serde_yaml::to_string(&rows)
+        .map_err(|error| format!("failed to serialize yaml output: {error}"))
 }
 
 pub fn render_table(
@@ -246,7 +261,7 @@ mod tests {
 
     use crate::dynamic_object::DynamicObject;
 
-    use super::{DetailLevel, render_json, render_table};
+    use super::{DetailLevel, render_json, render_table, render_yaml};
 
     #[test]
     fn renders_table_with_columns_and_count() {
@@ -279,6 +294,20 @@ mod tests {
 
         assert!(out.starts_with("["));
         assert!(out.contains("\"metadata.name\": \"pod-a\""));
+    }
+
+    #[test]
+    fn renders_yaml_array() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.name".to_string(),
+            Value::String("pod-a".to_string()),
+        );
+        let out = render_yaml(&[DynamicObject { fields }], DetailLevel::Describe, None)
+            .expect("yaml output must serialize");
+
+        assert!(out.starts_with("-"));
+        assert!(out.contains("metadata.name: pod-a"));
     }
 
     #[test]

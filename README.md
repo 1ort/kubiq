@@ -12,7 +12,7 @@ Mini-KQL — CLI для выполнения SQL-подобных запросо
 По умолчанию Mini-KQL отображает только имя ресурса (`name`).
 
 - Полный вывод всех полей: `--describe` (или `-d`)
-- Формат вывода: `--output table|json` (или `-o`)
+- Формат вывода: `--output table|json|yaml` (или `-o`)
 
 Примеры:
 
@@ -20,6 +20,7 @@ Mini-KQL — CLI для выполнения SQL-подобных запросо
 mini-kql pods where metadata.namespace '==' demo-a
 mini-kql --describe pods where metadata.namespace '==' demo-a
 mini-kql -o json --describe pods where metadata.namespace '==' demo-a
+mini-kql -o yaml pods where metadata.namespace '==' demo-a
 mini-kql pods where metadata.namespace '==' demo-a select metadata.name,metadata.namespace
 ```
 

@@ -7,4 +7,5 @@ edition = "2024"
 k8s-openapi = { version = "0.24", features = ["v1_30"] }
 kube = { version = "0.98", features = ["client", "derive", "runtime", "rustls-tls", "http-proxy"] }
 serde_json = "1"
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread"] }

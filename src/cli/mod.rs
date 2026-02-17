@@ -17,7 +17,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::MissingArgs => write!(
                 f,
-                "usage: mini-kql [--output table|json] [--describe] <resource> where <predicates> [select <paths>]"
+                "usage: mini-kql [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]"
             ),
             Self::InvalidArgs(error) => write!(f, "invalid args: {error}"),
             Self::Parse(error) => write!(f, "parse error: {error}"),
@@ -99,8 +99,11 @@ fn parse_format(value: &str) -> Result<output::OutputFormat, CliError> {
     if value.eq_ignore_ascii_case("json") {
         return Ok(output::OutputFormat::Json);
     }
+    if value.eq_ignore_ascii_case("yaml") {
+        return Ok(output::OutputFormat::Yaml);
+    }
     Err(CliError::InvalidArgs(format!(
-        "unsupported output format '{value}', expected table|json"
+        "unsupported output format '{value}', expected table|json|yaml"
     )))
 }
 
@@ -127,5 +130,20 @@ mod tests {
         assert_eq!(format, OutputFormat::Json);
         assert_eq!(detail, DetailLevel::Describe);
         assert_eq!(positional[0], "pods");
+    }
+
+    #[test]
+    fn parses_yaml_output_flag() {
+        let args = vec![
+            "--output=yaml".to_string(),
+            "pods".to_string(),
+            "where".to_string(),
+            "metadata.name".to_string(),
+            "==".to_string(),
+            "pod-a".to_string(),
+        ];
+
+        let (format, _, _) = parse_cli_flags(&args).expect("flags must parse");
+        assert_eq!(format, OutputFormat::Yaml);
     }
 }
