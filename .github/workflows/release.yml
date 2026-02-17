@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "release/*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          SAFE_TAG="${GITHUB_REF_NAME//\//-}"
+          ASSET_NAME="kubiq-${SAFE_TAG}-${{ matrix.platform }}.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/${ASSET_NAME}" -C target/release kubiq
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $safeTag = "${{ github.ref_name }}" -replace "/", "-"
+          $assetName = "kubiq-$safeTag-${{ matrix.platform }}.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path target/release/kubiq.exe -DestinationPath "dist/$assetName"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-artifact
+          path: dist/*
+          if-no-files-found: error
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release with generated changelog
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
