@@ -37,3 +37,15 @@ kubectl get widgets -A
 ```
 
 В fixtures intentionally есть разные типы сущностей (core + CRD), чтобы проверять фильтрацию Mini-KQL на разнородных объектах.
+
+### Запуск e2e тестов
+
+Интеграционные e2e тесты находятся в `tests/e2e_minikube.rs`.
+
+По умолчанию они пропускаются, если не включены через env.
+
+Запуск:
+
+```bash
+MINI_KQL_E2E=1 cargo test --test e2e_minikube -- --nocapture
+```
