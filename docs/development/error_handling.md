@@ -1,20 +1,29 @@
 # Error handling
 
-Текущее состояние MVP:
+Текущее состояние:
 
 - CLI использует `CliError` с категориями:
-  - `MissingArgs`
   - `InvalidArgs`
   - `Parse`
   - `K8s`
   - `Output`
-- Внутренние слои в основном возвращают `Result<_, String>`
+- K8s layer использует typed `K8sError`:
+  - `EmptyResourceName`
+  - `RuntimeInit`
+  - `ConfigInfer`
+  - `ClientBuild`
+  - `DiscoveryRun`
+  - `ApiUnreachable`
+  - `ResourceNotFound`
+  - `ListFailed`
+  - `PaginationExceeded`
+  - `PaginationStuck`
+- Output layer использует typed `OutputError` (`JsonSerialize`, `YamlSerialize`)
+- Реализация typed errors построена на `thiserror`
+- Внутренние причины ошибок сохраняются через `source` (error chain)
 
 Требование к сообщениям:
 
 - Чётко указывать, в каком этапе произошла ошибка
 - Не терять контекст внешней ошибки (`k8s error: ...`, `parse error: ...`)
-
-План после MVP:
-
-- Перейти на единую typed-модель ошибок (`thiserror`)
+- Давать actionable tips для частых операторских проблем (resource not found, API unreachable)

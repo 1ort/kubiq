@@ -6,6 +6,7 @@
 - path
 - evaluator
 - k8s pagination helpers (`limit/continue`, guards)
+- error rendering/classification (`CliError` tips, `K8sError`, `OutputError`)
 
 ## Integration tests (minikube)
 
@@ -51,4 +52,4 @@ kubectl get widgets -A
 KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```
 
-E2E тесты проверяют pipeline на реальном кластере (core + CRD). Логика пагинации покрыта unit-тестами в `src/k8s/mod.rs`.
+E2E тесты проверяют pipeline на реальном кластере (core + CRD). Логика пагинации покрыта unit-тестами в `src/k8s/mod.rs`, а error-траектории и подсказки — unit-тестами в `src/cli/mod.rs`.

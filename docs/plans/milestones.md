@@ -6,3 +6,5 @@
 4. CLI поддерживает `table|json|yaml`, `--describe`, `select` — ✅
 5. Есть e2e покрытие на minikube — ✅
 6. MVP готов — ✅
+7. Pagination/batching для `list` реализованы — ✅
+8. Typed error hierarchy (`CliError`/`K8sError`/`OutputError`) реализована — ✅

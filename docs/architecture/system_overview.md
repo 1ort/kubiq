@@ -18,3 +18,4 @@ Projection + Output
 - Evaluator применяет `where`
 - Projection применяет `select`/summary/describe
 - Output рендерит `table|json|yaml`
+- Ошибки типизированы (`CliError`/`K8sError`/`OutputError`) и сохраняют source chain

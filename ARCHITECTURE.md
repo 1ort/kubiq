@@ -42,6 +42,11 @@ Output (summary/describe/select, table/json/yaml)
 - `select`-проекция
 - `table|json|yaml`
 
+### Error model
+- Единая иерархия: `CliError`, `K8sError`, `OutputError`
+- Сохранение source chain (через `thiserror`)
+- Actionable tips на уровне CLI-ошибок
+
 ## MVP constraints
 
 - Только list

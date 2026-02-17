@@ -17,6 +17,7 @@ Implemented:
 - Default summary output (`name` only)
 - Full output via `--describe`
 - End-to-end tests on Minikube
+- Typed error hierarchy with actionable CLI tips (`CliError`/`K8sError`/`OutputError`)
 
 ## Features
 
@@ -131,7 +132,7 @@ cargo run -- --help
 
 ## Architecture (High Level)
 
-`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/list -> Evaluator -> Projection -> Output`
+`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> Projection -> Output`
 
 ## Project Layout
 
@@ -140,6 +141,7 @@ src/
   cli/
   parser/
   engine/
+  error.rs
   k8s/
   output/
   dynamic_object.rs

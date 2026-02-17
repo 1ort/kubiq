@@ -1,39 +1,6 @@
 use clap::{Parser, ValueEnum, error::ErrorKind};
 
-use crate::{engine, k8s, output, parser};
-
-#[derive(Debug)]
-pub enum CliError {
-    InvalidArgs(String),
-    Parse(String),
-    K8s(String),
-    Output(String),
-}
-
-impl std::fmt::Display for CliError {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        match self {
-            Self::InvalidArgs(error) => write!(
-                f,
-                "invalid args: {error}\n\nTip: run `kubiq --help` to see usage and examples."
-            ),
-            Self::Parse(error) => write!(
-                f,
-                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [select <paths>]`.\nExample: `kubiq pods where metadata.namespace == demo-a select metadata.name`"
-            ),
-            Self::K8s(error) => write!(f, "{}\n\n{}", format_k8s_error(error), k8s_tip(error)),
-            Self::Output(error) => write!(
-                f,
-                "output error: {error}\n\nTip: supported formats are `table`, `json`, `yaml`."
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CliError {}
+use crate::{engine, error::CliError, k8s, output, parser};
 
 #[derive(Clone, Debug, ValueEnum)]
 enum OutputArg {
@@ -128,25 +95,13 @@ fn map_output_format(format: OutputArg) -> output::OutputFormat {
     }
 }
 
-fn format_k8s_error(error: &str) -> String {
-    format!("k8s error: {error}")
-}
-
-fn k8s_tip(error: &str) -> &'static str {
-    if error.contains("client error (Connect)") || error.contains("Unable to connect") {
-        return "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info";
-    }
-    if error.contains("was not found via discovery") {
-        return "Tip: resource was not found. Check plural name via:\n  kubectl api-resources";
-    }
-    "Tip: verify cluster access with `kubectl get ns` and then retry."
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use super::{CliArgs, CliError, OutputArg, parse_query_tokens};
+    use crate::error::{CliError, K8sError, OutputError, boxed_error};
+
+    use super::{CliArgs, OutputArg, parse_query_tokens};
 
     #[test]
     fn parses_flags_with_clap() {
@@ -201,11 +156,35 @@ mod tests {
 
     #[test]
     fn k8s_error_contains_connectivity_tip() {
-        let err =
-            CliError::K8s("discovery failed: ServiceError: client error (Connect)".to_string());
+        let err = CliError::K8s(K8sError::ApiUnreachable {
+            stage: "discovery",
+            source: crate::error::boxed_error(std::io::Error::other("dial tcp timeout")),
+        });
         let rendered = err.to_string();
         assert!(rendered.contains("Kubernetes API is unreachable"));
         assert!(rendered.contains("kubectl cluster-info"));
+    }
+
+    #[test]
+    fn k8s_error_not_found_contains_api_resources_tip() {
+        let err = CliError::K8s(K8sError::ResourceNotFound {
+            resource: "podsx".to_string(),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("resource was not found"));
+        assert!(rendered.contains("kubectl api-resources"));
+    }
+
+    #[test]
+    fn k8s_error_includes_source_details_in_rendered_message() {
+        let err = CliError::K8s(K8sError::ConfigInfer {
+            source: boxed_error(std::io::Error::other(
+                "no such file or directory: /tmp/missing-kubeconfig",
+            )),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("failed to infer kube config"));
+        assert!(rendered.contains("missing-kubeconfig"));
     }
 
     #[test]
@@ -214,5 +193,23 @@ mod tests {
         let rendered = err.to_string();
         assert!(rendered.contains("query format"));
         assert!(rendered.contains("kubiq pods where"));
+    }
+
+    #[test]
+    fn k8s_error_fallback_tip_is_rendered_for_non_connectivity_failures() {
+        let err = CliError::K8s(K8sError::DiscoveryRun {
+            source: boxed_error(std::io::Error::other("forbidden")),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("verify cluster access with `kubectl get ns`"));
+    }
+
+    #[test]
+    fn output_error_contains_format_tip() {
+        let source = serde_json::from_str::<serde_json::Value>("not json").expect_err("must fail");
+        let err = CliError::Output(OutputError::JsonSerialize { source });
+        let rendered = err.to_string();
+        assert!(rendered.contains("output error"));
+        assert!(rendered.contains("supported formats are `table`, `json`, `yaml`"));
     }
 }
