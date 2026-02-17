@@ -99,7 +99,7 @@ fn map_output_format(format: OutputArg) -> output::OutputFormat {
 mod tests {
     use clap::Parser;
 
-    use crate::error::{CliError, K8sError};
+    use crate::error::{CliError, K8sError, OutputError, boxed_error};
 
     use super::{CliArgs, OutputArg, parse_query_tokens};
 
@@ -181,5 +181,23 @@ mod tests {
         let rendered = err.to_string();
         assert!(rendered.contains("query format"));
         assert!(rendered.contains("kubiq pods where"));
+    }
+
+    #[test]
+    fn k8s_error_fallback_tip_is_rendered_for_non_connectivity_failures() {
+        let err = CliError::K8s(K8sError::DiscoveryRun {
+            source: boxed_error(std::io::Error::other("forbidden")),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("verify cluster access with `kubectl get ns`"));
+    }
+
+    #[test]
+    fn output_error_contains_format_tip() {
+        let source = serde_json::from_str::<serde_json::Value>("not json").expect_err("must fail");
+        let err = CliError::Output(OutputError::JsonSerialize { source });
+        let rendered = err.to_string();
+        assert!(rendered.contains("output error"));
+        assert!(rendered.contains("supported formats are `table`, `json`, `yaml`"));
     }
 }
