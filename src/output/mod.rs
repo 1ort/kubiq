@@ -40,8 +40,7 @@ pub fn render_json(
         .iter()
         .map(|object| project_fields(object, detail, select_paths))
         .collect();
-    serde_json::to_string_pretty(&rows)
-        .map_err(|error| OutputError::JsonSerialize(error.to_string()))
+    serde_json::to_string_pretty(&rows).map_err(|source| OutputError::JsonSerialize { source })
 }
 
 pub fn render_yaml(
@@ -53,7 +52,7 @@ pub fn render_yaml(
         .iter()
         .map(|object| project_fields(object, detail, select_paths))
         .collect();
-    serde_yaml::to_string(&rows).map_err(|error| OutputError::YamlSerialize(error.to_string()))
+    serde_yaml::to_string(&rows).map_err(|source| OutputError::YamlSerialize { source })
 }
 
 pub fn render_table(

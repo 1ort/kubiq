@@ -1,75 +1,69 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+use std::error::Error as StdError;
+
+use thiserror::Error;
+
+type BoxError = Box<dyn StdError + Send + Sync>;
+
+pub fn boxed_error<E>(error: E) -> BoxError
+where
+    E: StdError + Send + Sync + 'static,
+{
+    Box::new(error)
+}
+
+#[derive(Debug, Error)]
 pub enum K8sError {
+    #[error("resource name is empty")]
     EmptyResourceName,
-    RuntimeInit(String),
-    ConfigInfer(String),
-    ClientBuild(String),
-    DiscoveryRun(String),
+    #[error("failed to init async runtime")]
+    RuntimeInit {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to infer kube config")]
+    ConfigInfer {
+        #[source]
+        source: BoxError,
+    },
+    #[error("failed to build kube client")]
+    ClientBuild {
+        #[source]
+        source: BoxError,
+    },
+    #[error("discovery failed")]
+    DiscoveryRun {
+        #[source]
+        source: BoxError,
+    },
+    #[error("resource '{resource}' was not found via discovery")]
     ResourceNotFound { resource: String },
-    ListFailed { resource: String, source: String },
+    #[error("failed to list resource '{resource}'")]
+    ListFailed {
+        resource: String,
+        #[source]
+        source: BoxError,
+    },
+    #[error("pagination for resource '{resource}' exceeded max pages ({max_pages})")]
     PaginationExceeded { resource: String, max_pages: usize },
+    #[error("pagination for resource '{resource}' got stuck on continue token '{token}'")]
     PaginationStuck { resource: String, token: String },
 }
 
-impl std::fmt::Display for K8sError {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        match self {
-            Self::EmptyResourceName => write!(f, "resource name is empty"),
-            Self::RuntimeInit(source) => write!(f, "failed to init async runtime: {source}"),
-            Self::ConfigInfer(source) => write!(f, "failed to infer kube config: {source}"),
-            Self::ClientBuild(source) => write!(f, "failed to build kube client: {source}"),
-            Self::DiscoveryRun(source) => write!(f, "discovery failed: {source}"),
-            Self::ResourceNotFound { resource } => {
-                write!(f, "resource '{resource}' was not found via discovery")
-            }
-            Self::ListFailed { resource, source } => {
-                write!(f, "failed to list resource '{resource}': {source}")
-            }
-            Self::PaginationExceeded {
-                resource,
-                max_pages,
-            } => write!(
-                f,
-                "pagination for resource '{resource}' exceeded max pages ({max_pages})"
-            ),
-            Self::PaginationStuck { resource, token } => write!(
-                f,
-                "pagination for resource '{resource}' got stuck on continue token '{token}'"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for K8sError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum OutputError {
-    JsonSerialize(String),
-    YamlSerialize(String),
+    #[error("failed to serialize json output")]
+    JsonSerialize {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("failed to serialize yaml output")]
+    YamlSerialize {
+        #[source]
+        source: serde_yaml::Error,
+    },
 }
 
-impl std::fmt::Display for OutputError {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        match self {
-            Self::JsonSerialize(source) => {
-                write!(f, "failed to serialize json output: {source}")
-            }
-            Self::YamlSerialize(source) => {
-                write!(f, "failed to serialize yaml output: {source}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for OutputError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum CliError {
     InvalidArgs(String),
     Parse(String),
@@ -100,16 +94,24 @@ impl std::fmt::Display for CliError {
     }
 }
 
-impl std::error::Error for CliError {}
+impl std::error::Error for CliError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::K8s(error) => Some(error),
+            Self::Output(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 fn k8s_tip(error: &K8sError) -> &'static str {
     match error {
         K8sError::ResourceNotFound { .. } => {
             "Tip: resource was not found. Check plural name via:\n  kubectl api-resources"
         }
-        K8sError::DiscoveryRun(source) | K8sError::ListFailed { source, .. }
-            if source.contains("client error (Connect)")
-                || source.contains("Unable to connect") =>
+        K8sError::DiscoveryRun { source } | K8sError::ListFailed { source, .. }
+            if source.to_string().contains("client error (Connect)")
+                || source.to_string().contains("Unable to connect") =>
         {
             "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info"
         }

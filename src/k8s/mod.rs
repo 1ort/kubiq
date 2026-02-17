@@ -10,7 +10,10 @@ use kube::{
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
-use crate::{dynamic_object::DynamicObject as EngineObject, error::K8sError};
+use crate::{
+    dynamic_object::DynamicObject as EngineObject,
+    error::{K8sError, boxed_error},
+};
 
 const LIST_PAGE_SIZE: u32 = 500;
 const MAX_LIST_PAGES: usize = 10_000;
@@ -21,17 +24,20 @@ pub fn list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
         return Err(K8sError::EmptyResourceName);
     }
 
-    let runtime = Runtime::new().map_err(|error| K8sError::RuntimeInit(error.to_string()))?;
+    let runtime = Runtime::new().map_err(|source| K8sError::RuntimeInit { source })?;
     runtime.block_on(async_list(resource))
 }
 
 async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
     let config = Config::infer()
         .await
-        .map_err(|error| K8sError::ConfigInfer(error.to_string()))?;
+        .map_err(|source| K8sError::ConfigInfer {
+            source: boxed_error(source),
+        })?;
 
-    let client =
-        Client::try_from(config).map_err(|error| K8sError::ClientBuild(error.to_string()))?;
+    let client = Client::try_from(config).map_err(|source| K8sError::ClientBuild {
+        source: boxed_error(source),
+    })?;
 
     let api_resource = resolve_api_resource(&client, resource).await?;
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
@@ -48,9 +54,9 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
         let mut page = api
             .list(&params)
             .await
-            .map_err(|error| K8sError::ListFailed {
+            .map_err(|source| K8sError::ListFailed {
                 resource: resource.to_string(),
-                source: error.to_string(),
+                source: boxed_error(source),
             })?;
 
         all_items.append(&mut page.items);
@@ -118,7 +124,9 @@ async fn resolve_api_resource(
     let discovery = discovery::Discovery::new(client.clone())
         .run()
         .await
-        .map_err(|error| K8sError::DiscoveryRun(error.to_string()))?;
+        .map_err(|source| K8sError::DiscoveryRun {
+            source: boxed_error(source),
+        })?;
 
     for group in discovery.groups() {
         for (api_resource, capabilities) in group.recommended_resources() {
@@ -265,13 +273,13 @@ mod tests {
     #[test]
     fn page_limit_rejects_overflow() {
         let result = ensure_page_limit("pods", MAX_LIST_PAGES + 1);
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(K8sError::PaginationExceeded {
-                resource: "pods".to_string(),
-                max_pages: MAX_LIST_PAGES
-            })
-        );
+                resource,
+                max_pages
+            }) if resource == "pods" && max_pages == MAX_LIST_PAGES
+        ));
     }
 
     #[test]
@@ -297,18 +305,16 @@ mod tests {
     #[test]
     fn next_continue_token_rejects_same_token() {
         let result = next_continue_token("pods", Some("token-a"), Some("token-a".to_string()));
-        assert_eq!(
+        assert!(matches!(
             result,
-            Err(K8sError::PaginationStuck {
-                resource: "pods".to_string(),
-                token: "token-a".to_string()
-            })
-        );
+            Err(K8sError::PaginationStuck { resource, token })
+                if resource == "pods" && token == "token-a"
+        ));
     }
 
     #[test]
     fn empty_resource_name_is_typed_error() {
         let result = super::list("  ");
-        assert_eq!(result, Err(K8sError::EmptyResourceName));
+        assert!(matches!(result, Err(K8sError::EmptyResourceName)));
     }
 }

@@ -156,9 +156,11 @@ mod tests {
 
     #[test]
     fn k8s_error_contains_connectivity_tip() {
-        let err = CliError::K8s(K8sError::DiscoveryRun(
-            "ServiceError: client error (Connect)".to_string(),
-        ));
+        let err = CliError::K8s(K8sError::DiscoveryRun {
+            source: crate::error::boxed_error(std::io::Error::other(
+                "ServiceError: client error (Connect)",
+            )),
+        });
         let rendered = err.to_string();
         assert!(rendered.contains("Kubernetes API is unreachable"));
         assert!(rendered.contains("kubectl cluster-info"));
