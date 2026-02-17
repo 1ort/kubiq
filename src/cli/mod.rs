@@ -29,9 +29,12 @@ pub fn run() -> Result<(), CliError> {
     }
 
     let resource = &args[0];
-    let query = args[1..].join(" ");
-
-    let ast = parser::parse_query(&query).map_err(CliError::Parse)?;
+    let ast = if args[1].eq_ignore_ascii_case("where") {
+        parser::parse_query_args(&args[1..]).map_err(CliError::Parse)?
+    } else {
+        let query = args[1..].join(" ");
+        parser::parse_query(&query).map_err(CliError::Parse)?
+    };
     let plan = engine::build_plan(ast);
     let objects = k8s::list(resource).map_err(CliError::K8s)?;
     let filtered = engine::evaluate(&plan, &objects);

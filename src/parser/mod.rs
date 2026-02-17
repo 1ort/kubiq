@@ -59,6 +59,54 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
     Ok(QueryAst { predicates })
 }
 
+pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
+    if args.is_empty() {
+        return Err("WHERE clause is empty".to_string());
+    }
+    if !args[0].eq_ignore_ascii_case("where") {
+        return Err("query must start with WHERE".to_string());
+    }
+    if args.len() < 4 {
+        return Err("incomplete WHERE clause".to_string());
+    }
+
+    let mut predicates = Vec::new();
+    let mut index = 1;
+    while index + 2 < args.len() {
+        let path = args[index].trim().to_string();
+        let op_token = args[index + 1].as_str();
+        let value = parse_value(args[index + 2].trim())?;
+
+        let op = match op_token {
+            "==" => Operator::Eq,
+            "!=" => Operator::Ne,
+            _ => return Err(format!("unsupported operator: {op_token}")),
+        };
+
+        if path.is_empty() {
+            return Err("predicate path is empty".to_string());
+        }
+
+        predicates.push(Predicate { path, op, value });
+        index += 3;
+
+        if index == args.len() {
+            break;
+        }
+
+        if !args[index].eq_ignore_ascii_case("and") {
+            return Err(format!("expected AND, got: {}", args[index]));
+        }
+        index += 1;
+    }
+
+    if predicates.is_empty() || index != args.len() {
+        return Err("incomplete WHERE clause".to_string());
+    }
+
+    Ok(QueryAst { predicates })
+}
+
 fn parse_value(input: &str) -> Result<Value, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -143,7 +191,7 @@ fn split_and_predicates(input: &str) -> Result<Vec<&str>, String> {
 mod tests {
     use serde_json::Value;
 
-    use super::{Operator, parse_query};
+    use super::{Operator, parse_query, parse_query_args};
 
     #[test]
     fn parses_and_chain() {
@@ -177,5 +225,21 @@ mod tests {
 
         assert_eq!(ast.predicates[0].value, Value::from(2));
         assert_eq!(ast.predicates[1].value, Value::Bool(true));
+    }
+
+    #[test]
+    fn parses_where_from_args() {
+        let args = vec![
+            "where".to_string(),
+            "metadata.namespace".to_string(),
+            "==".to_string(),
+            "demo-a".to_string(),
+        ];
+        let ast = parse_query_args(&args).expect("must parse valid args");
+        assert_eq!(ast.predicates.len(), 1);
+        assert_eq!(
+            ast.predicates[0].value,
+            Value::String("demo-a".to_string())
+        );
     }
 }
