@@ -12,6 +12,8 @@ use tokio::runtime::Runtime;
 
 use crate::dynamic_object::DynamicObject as EngineObject;
 
+const LIST_PAGE_SIZE: u32 = 500;
+
 pub fn list(resource: &str) -> Result<Vec<EngineObject>, String> {
     let resource = resource.trim();
     if resource.is_empty() {
@@ -34,16 +36,48 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
     let api_resource = resolve_api_resource(&client, resource).await?;
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
 
-    let items = api
-        .list(&ListParams::default())
-        .await
-        .map_err(|error| format!("failed to list resource '{resource}': {error}"))?;
+    let mut all_items = Vec::new();
+    let mut continue_token: Option<String> = None;
 
-    Ok(items
-        .items
+    loop {
+        let params = build_list_params(LIST_PAGE_SIZE, continue_token.as_deref());
+        let mut page = api
+            .list(&params)
+            .await
+            .map_err(|error| format!("failed to list resource '{resource}': {error}"))?;
+
+        all_items.append(&mut page.items);
+
+        let next_continue = page.metadata.continue_.filter(|token| !token.is_empty());
+        if next_continue.is_none() {
+            break;
+        }
+
+        if continue_token.as_ref() == next_continue.as_ref() {
+            return Err(format!(
+                "pagination for resource '{resource}' got stuck on continue token '{token}'",
+                token = next_continue.as_deref().unwrap_or_default()
+            ));
+        }
+
+        continue_token = next_continue;
+    }
+
+    Ok(all_items
         .into_iter()
         .map(dynamic_to_engine_object)
         .collect())
+}
+
+fn build_list_params(
+    limit: u32,
+    continue_token: Option<&str>,
+) -> ListParams {
+    let mut params = ListParams::default().limit(limit);
+    if let Some(token) = continue_token {
+        params = params.continue_token(token);
+    }
+    params
 }
 
 async fn resolve_api_resource(
@@ -147,7 +181,7 @@ fn flatten_value(
 mod tests {
     use serde_json::{Value, json};
 
-    use super::flatten_value;
+    use super::{build_list_params, flatten_value};
 
     #[test]
     fn flattens_nested_objects_to_dot_paths() {
@@ -170,5 +204,19 @@ mod tests {
         );
         assert_eq!(out.get("spec.replicas"), Some(&Value::from(2)));
         assert_eq!(out.get("spec.enabled"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn builds_list_params_with_limit_and_continue_token() {
+        let params = build_list_params(250, Some("next-token"));
+        assert_eq!(params.limit, Some(250));
+        assert_eq!(params.continue_token.as_deref(), Some("next-token"));
+    }
+
+    #[test]
+    fn builds_list_params_with_limit_only() {
+        let params = build_list_params(250, None);
+        assert_eq!(params.limit, Some(250));
+        assert_eq!(params.continue_token, None);
     }
 }

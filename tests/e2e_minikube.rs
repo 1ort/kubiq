@@ -46,7 +46,11 @@ fn e2e_table_where_select_for_core_resource() {
         "metadata.name,metadata.namespace",
     ]);
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8(output.stdout).expect("stdout must be valid UTF-8");
     assert!(stdout.contains("metadata.name"));
@@ -72,9 +76,14 @@ fn e2e_json_select_parent_path_is_nested() {
         "metadata",
     ]);
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let rows: JsonValue = serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
     let first = rows
         .as_array()
         .and_then(|items| items.first())
@@ -85,8 +94,14 @@ fn e2e_json_select_parent_path_is_nested() {
         .and_then(JsonValue::as_object)
         .expect("metadata must be nested object");
 
-    assert_eq!(metadata.get("name"), Some(&JsonValue::String("worker-a".to_string())));
-    assert_eq!(metadata.get("namespace"), Some(&JsonValue::String("demo-a".to_string())));
+    assert_eq!(
+        metadata.get("name"),
+        Some(&JsonValue::String("worker-a".to_string()))
+    );
+    assert_eq!(
+        metadata.get("namespace"),
+        Some(&JsonValue::String("demo-a".to_string()))
+    );
 }
 
 #[test]
@@ -106,9 +121,14 @@ fn e2e_yaml_describe_is_nested() {
         "-d",
     ]);
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let rows: YamlValue = serde_yaml::from_slice(&output.stdout).expect("stdout must be valid YAML");
+    let rows: YamlValue =
+        serde_yaml::from_slice(&output.stdout).expect("stdout must be valid YAML");
     let first = rows
         .as_sequence()
         .and_then(|items| items.first())
@@ -121,8 +141,14 @@ fn e2e_yaml_describe_is_nested() {
 
     let name_key = YamlValue::String("name".to_string());
     let namespace_key = YamlValue::String("namespace".to_string());
-    assert_eq!(metadata.get(&name_key), Some(&YamlValue::String("worker-a".to_string())));
-    assert_eq!(metadata.get(&namespace_key), Some(&YamlValue::String("demo-a".to_string())));
+    assert_eq!(
+        metadata.get(&name_key),
+        Some(&YamlValue::String("worker-a".to_string()))
+    );
+    assert_eq!(
+        metadata.get(&namespace_key),
+        Some(&YamlValue::String("demo-a".to_string()))
+    );
 }
 
 #[test]
@@ -143,14 +169,25 @@ fn e2e_select_for_crd_widget() {
         "metadata.name,spec.owner",
     ]);
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    let rows: JsonValue = serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
     let first = rows
         .as_array()
         .and_then(|items| items.first())
         .expect("must return at least one object");
 
-    assert_eq!(first.get("metadata.name"), Some(&JsonValue::String("widget-a".to_string())));
-    assert_eq!(first.get("spec.owner"), Some(&JsonValue::String("team-a".to_string())));
+    assert_eq!(
+        first.get("metadata.name"),
+        Some(&JsonValue::String("widget-a".to_string()))
+    );
+    assert_eq!(
+        first.get("spec.owner"),
+        Some(&JsonValue::String("team-a".to_string()))
+    );
 }

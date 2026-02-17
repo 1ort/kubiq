@@ -411,8 +411,12 @@ mod tests {
             Value::String("pod-a".to_string()),
         );
         let select = vec!["spec.nodeName".to_string()];
-        let json = render_json(&[DynamicObject { fields }], DetailLevel::Summary, Some(&select))
-            .expect("json output must serialize");
+        let json = render_json(
+            &[DynamicObject { fields }],
+            DetailLevel::Summary,
+            Some(&select),
+        )
+        .expect("json output must serialize");
 
         assert!(json.contains("\"spec.nodeName\": null"));
     }
