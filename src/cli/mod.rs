@@ -56,7 +56,7 @@ struct CliArgs {
     #[arg(value_name = "resource")]
     resource: String,
 
-    #[arg(value_name = "query", required = true, num_args = 1.., trailing_var_arg = true)]
+    #[arg(value_name = "query", required = true, num_args = 1..)]
     query: Vec<String>,
 }
 
