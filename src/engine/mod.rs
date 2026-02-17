@@ -27,11 +27,11 @@ fn matches_all(
     predicates: &[parser::Predicate],
 ) -> bool {
     predicates.iter().all(|predicate| {
-        let value = object.get(&predicate.path).unwrap_or_default();
+        let value = object.get(&predicate.path);
 
         match predicate.op {
-            parser::Operator::Eq => value == predicate.value,
-            parser::Operator::Ne => value != predicate.value,
+            parser::Operator::Eq => value == Some(predicate.value.as_str()),
+            parser::Operator::Ne => value.is_some_and(|actual| actual != predicate.value),
         }
     })
 }
@@ -72,5 +72,32 @@ mod tests {
         );
 
         assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn missing_field_does_not_match_eq_or_ne() {
+        let mut fields = BTreeMap::new();
+        fields.insert("metadata.namespace".to_string(), "default".to_string());
+
+        let object = DynamicObject { fields };
+
+        let eq_plan = QueryPlan {
+            predicates: vec![Predicate {
+                path: "spec.nodeName".to_string(),
+                op: Operator::Eq,
+                value: "worker-1".to_string(),
+            }],
+        };
+
+        let ne_plan = QueryPlan {
+            predicates: vec![Predicate {
+                path: "spec.nodeName".to_string(),
+                op: Operator::Ne,
+                value: "worker-1".to_string(),
+            }],
+        };
+
+        assert!(evaluate(&eq_plan, std::slice::from_ref(&object)).is_empty());
+        assert!(evaluate(&ne_plan, &[object]).is_empty());
     }
 }
