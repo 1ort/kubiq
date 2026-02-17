@@ -1,5 +1,5 @@
 fn main() {
-    if let Err(error) = mini_kql::run() {
+    if let Err(error) = kubiq::run() {
         eprintln!("{error}");
         std::process::exit(1);
     }

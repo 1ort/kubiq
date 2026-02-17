@@ -18,11 +18,11 @@ impl std::fmt::Display for CliError {
         match self {
             Self::InvalidArgs(error) => write!(
                 f,
-                "invalid args: {error}\n\nTip: run `mini-kql --help` to see usage and examples."
+                "invalid args: {error}\n\nTip: run `kubiq --help` to see usage and examples."
             ),
             Self::Parse(error) => write!(
                 f,
-                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [select <paths>]`.\nExample: `mini-kql pods where metadata.namespace == demo-a select metadata.name`"
+                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [select <paths>]`.\nExample: `kubiq pods where metadata.namespace == demo-a select metadata.name`"
             ),
             Self::K8s(error) => write!(f, "{}\n\n{}", format_k8s_error(error), k8s_tip(error)),
             Self::Output(error) => write!(
@@ -43,7 +43,7 @@ enum OutputArg {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "mini-kql")]
+#[command(name = "kubiq")]
 #[command(about = "Query Kubernetes resources with where/select")]
 #[command(version)]
 struct CliArgs {
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn parses_flags_with_clap() {
         let args = CliArgs::parse_from([
-            "mini-kql",
+            "kubiq",
             "-o",
             "json",
             "-d",
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn parses_output_enum_case_insensitive() {
-        let args = CliArgs::parse_from(["mini-kql", "--output", "YAML", "pods", "where", "metadata.name", "==", "pod-a"]);
+        let args = CliArgs::parse_from(["kubiq", "--output", "YAML", "pods", "where", "metadata.name", "==", "pod-a"]);
         assert!(matches!(args.output, OutputArg::Yaml));
     }
 
@@ -191,6 +191,6 @@ mod tests {
         let err = CliError::Parse("invalid query syntax".to_string());
         let rendered = err.to_string();
         assert!(rendered.contains("query format"));
-        assert!(rendered.contains("mini-kql pods where"));
+        assert!(rendered.contains("kubiq pods where"));
     }
 }

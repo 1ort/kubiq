@@ -4,7 +4,7 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 
 fn e2e_enabled() -> bool {
-    std::env::var("MINI_KQL_E2E").as_deref() == Ok("1")
+    std::env::var("KUBIQ_E2E").as_deref() == Ok("1")
 }
 
 fn cluster_ready() -> bool {
@@ -18,8 +18,8 @@ fn cluster_ready() -> bool {
     }
 }
 
-fn run_mini_kql(args: &[&str]) -> std::process::Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mini-kql"));
+fn run_kubiq(args: &[&str]) -> std::process::Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kubiq"));
     cmd.args(args);
     cmd.env_remove("HTTP_PROXY");
     cmd.env_remove("HTTPS_PROXY");
@@ -27,7 +27,7 @@ fn run_mini_kql(args: &[&str]) -> std::process::Output {
     cmd.env_remove("http_proxy");
     cmd.env_remove("https_proxy");
     cmd.env_remove("all_proxy");
-    cmd.output().expect("mini-kql command must run")
+    cmd.output().expect("kubiq command must run")
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn e2e_table_where_select_for_core_resource() {
         return;
     }
 
-    let output = run_mini_kql(&[
+    let output = run_kubiq(&[
         "pods",
         "where",
         "metadata.namespace",
@@ -60,7 +60,7 @@ fn e2e_json_select_parent_path_is_nested() {
         return;
     }
 
-    let output = run_mini_kql(&[
+    let output = run_kubiq(&[
         "pods",
         "where",
         "metadata.name",
@@ -95,7 +95,7 @@ fn e2e_yaml_describe_is_nested() {
         return;
     }
 
-    let output = run_mini_kql(&[
+    let output = run_kubiq(&[
         "pods",
         "where",
         "metadata.name",
@@ -131,7 +131,7 @@ fn e2e_select_for_crd_widget() {
         return;
     }
 
-    let output = run_mini_kql(&[
+    let output = run_kubiq(&[
         "widgets",
         "where",
         "spec.enabled",

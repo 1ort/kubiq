@@ -57,5 +57,5 @@ echo "[6/6] Waiting for deployments"
 kubectl -n demo-a rollout status deployment/api --timeout=120s
 kubectl -n demo-b rollout status deployment/web --timeout=120s
 
-echo "Cluster is ready for Mini-KQL integration testing."
+echo "Cluster is ready for Kubiq integration testing."
 echo "Profile: $PROFILE"

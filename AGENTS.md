@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project goal
-Mini-KQL — CLI-инструмент для выполнения SQL-подобных запросов к Kubernetes API поверх любых ресурсов (core и CRD).
+Kubiq — CLI-инструмент для выполнения SQL-подобных запросов к Kubernetes API поверх любых ресурсов (core и CRD).
 
 ## MVP scope
 - Любые ресурсы (core + CRD)

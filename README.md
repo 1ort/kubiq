@@ -1,4 +1,4 @@
-# Mini-KQL
+# Kubiq
 
 A lightweight CLI to run SQL-like queries against the Kubernetes API (core resources and CRDs).
 
@@ -47,7 +47,7 @@ cargo run -- <args>
 ## Usage
 
 ```bash
-mini-kql [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]
+kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]
 ```
 
 Options:
@@ -80,19 +80,19 @@ Semantics:
 
 ```bash
 # Basic filter
-mini-kql pods where metadata.namespace == demo-a
+kubiq pods where metadata.namespace == demo-a
 
 # Filter + projection
-mini-kql pods where metadata.namespace == demo-a select metadata.name,metadata.namespace
+kubiq pods where metadata.namespace == demo-a select metadata.name,metadata.namespace
 
 # Parent projection (nested object in json/yaml)
-mini-kql -o json pods where metadata.name == worker-a select metadata
+kubiq -o json pods where metadata.name == worker-a select metadata
 
 # Full nested output
-mini-kql -o yaml -d pods where metadata.name == worker-a
+kubiq -o yaml -d pods where metadata.name == worker-a
 
 # CRD example
-mini-kql -o json widgets where spec.enabled == true select metadata.name,spec.owner
+kubiq -o json widgets where spec.enabled == true select metadata.name,spec.owner
 ```
 
 ## Local E2E Test Cluster (Minikube)
@@ -118,7 +118,7 @@ Delete the cluster:
 Run end-to-end tests:
 
 ```bash
-MINI_KQL_E2E=1 cargo test --test e2e_minikube -- --nocapture
+KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```
 
 ## Development Checks

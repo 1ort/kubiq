@@ -3,7 +3,7 @@
 ## Формат
 
 ```bash
-mini-kql [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]
+kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]
 ```
 
 Где:
@@ -29,8 +29,8 @@ mini-kql [--output table|json|yaml] [--describe] <resource> where <predicates> [
 ## Примеры
 
 ```bash
-mini-kql pods where metadata.namespace == demo-a
-mini-kql pods where metadata.namespace == demo-a select metadata.name,metadata.namespace
-mini-kql -o json pods where metadata.name == worker-a select metadata
-mini-kql -o yaml -d pods where metadata.name == worker-a
+kubiq pods where metadata.namespace == demo-a
+kubiq pods where metadata.namespace == demo-a select metadata.name,metadata.namespace
+kubiq -o json pods where metadata.name == worker-a select metadata
+kubiq -o yaml -d pods where metadata.name == worker-a
 ```

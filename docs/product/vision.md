@@ -1,6 +1,6 @@
 # Vision
 
-Mini-KQL — компактный CLI для SQL-подобных запросов к Kubernetes API,
+Kubiq — компактный CLI для SQL-подобных запросов к Kubernetes API,
 который одинаково работает с core-ресурсами и CRD.
 
 Цели:

@@ -35,5 +35,5 @@ MINIKUBE_PROFILE=kql-ci MINIKUBE_DRIVER=docker ./scripts/minikube-up.sh
 
 ```bash
 cargo test -q
-MINI_KQL_E2E=1 cargo test --test e2e_minikube -- --nocapture
+KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```
