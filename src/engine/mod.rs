@@ -4,11 +4,13 @@ use serde_json::Value;
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryPlan {
     pub predicates: Vec<parser::Predicate>,
+    pub select_paths: Option<Vec<String>>,
 }
 
 pub fn build_plan(ast: parser::QueryAst) -> QueryPlan {
     QueryPlan {
         predicates: ast.predicates,
+        select_paths: ast.select_paths,
     }
 }
 
@@ -28,7 +30,9 @@ fn matches_all(
     predicates: &[parser::Predicate],
 ) -> bool {
     predicates.iter().all(|predicate| {
-        let value = object.get(&predicate.path).and_then(|value| comparable_eq(value, &predicate.value));
+        let value = object
+            .get(&predicate.path)
+            .and_then(|value| comparable_eq(value, &predicate.value));
 
         match predicate.op {
             parser::Operator::Eq => value == Some(true),
@@ -52,8 +56,8 @@ fn comparable_eq(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use serde_json::Value;
+    use std::collections::BTreeMap;
 
     use crate::{
         dynamic_object::DynamicObject,
@@ -82,6 +86,7 @@ mod tests {
                 op: Operator::Eq,
                 value: Value::String("default".to_string()),
             }],
+            select_paths: None,
         };
 
         let result = evaluate(
@@ -111,6 +116,7 @@ mod tests {
                 op: Operator::Eq,
                 value: Value::String("worker-1".to_string()),
             }],
+            select_paths: None,
         };
 
         let ne_plan = QueryPlan {
@@ -119,6 +125,7 @@ mod tests {
                 op: Operator::Ne,
                 value: Value::String("worker-1".to_string()),
             }],
+            select_paths: None,
         };
 
         assert!(evaluate(&eq_plan, std::slice::from_ref(&object)).is_empty());
@@ -137,6 +144,7 @@ mod tests {
                 op: Operator::Eq,
                 value: Value::String("2".to_string()),
             }],
+            select_paths: None,
         };
 
         let ne_plan = QueryPlan {
@@ -145,6 +153,7 @@ mod tests {
                 op: Operator::Ne,
                 value: Value::String("2".to_string()),
             }],
+            select_paths: None,
         };
 
         assert!(evaluate(&eq_plan, std::slice::from_ref(&object)).is_empty());

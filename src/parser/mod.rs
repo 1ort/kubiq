@@ -3,6 +3,7 @@ use serde_json::Value;
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryAst {
     pub predicates: Vec<Predicate>,
+    pub select_paths: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,8 +32,10 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
         return Err("WHERE clause is empty".to_string());
     }
 
+    let (filter_expr, select_paths) = split_select_clause(expr)?;
+
     let mut predicates = Vec::new();
-    for segment in split_and_predicates(expr)? {
+    for segment in split_and_predicates(filter_expr)? {
         let segment = segment.trim();
 
         if let Some((left, right)) = segment.split_once("==") {
@@ -56,7 +59,10 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
         return Err(format!("unsupported predicate: {segment}"));
     }
 
-    Ok(QueryAst { predicates })
+    Ok(QueryAst {
+        predicates,
+        select_paths,
+    })
 }
 
 pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
@@ -71,8 +77,19 @@ pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
     }
 
     let mut predicates = Vec::new();
+    let mut select_paths = None;
     let mut index = 1;
-    while index + 2 < args.len() {
+    while index < args.len() {
+        if args[index].eq_ignore_ascii_case("select") {
+            select_paths = Some(parse_select_paths(&args[index + 1..].join(" "))?);
+            index = args.len();
+            break;
+        }
+
+        if index + 2 >= args.len() {
+            return Err("incomplete WHERE clause".to_string());
+        }
+
         let path = args[index].trim().to_string();
         let op_token = args[index + 1].as_str();
         let value = parse_value(args[index + 2].trim())?;
@@ -94,8 +111,14 @@ pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
             break;
         }
 
+        if args[index].eq_ignore_ascii_case("select") {
+            select_paths = Some(parse_select_paths(&args[index + 1..].join(" "))?);
+            index = args.len();
+            break;
+        }
+
         if !args[index].eq_ignore_ascii_case("and") {
-            return Err(format!("expected AND, got: {}", args[index]));
+            return Err(format!("expected AND or SELECT, got: {}", args[index]));
         }
         index += 1;
     }
@@ -104,7 +127,10 @@ pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
         return Err("incomplete WHERE clause".to_string());
     }
 
-    Ok(QueryAst { predicates })
+    Ok(QueryAst {
+        predicates,
+        select_paths,
+    })
 }
 
 fn parse_value(input: &str) -> Result<Value, String> {
@@ -187,6 +213,62 @@ fn split_and_predicates(input: &str) -> Result<Vec<&str>, String> {
     Ok(segments)
 }
 
+fn split_select_clause(input: &str) -> Result<(&str, Option<Vec<String>>), String> {
+    let bytes = input.as_bytes();
+    let mut index = 0;
+    let mut in_single_quote = false;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\'' {
+            in_single_quote = !in_single_quote;
+            index += 1;
+            continue;
+        }
+
+        if !in_single_quote
+            && index + 6 <= bytes.len()
+            && bytes[index..index + 6].eq_ignore_ascii_case(b"select")
+        {
+            let left_ws = index > 0 && bytes[index - 1].is_ascii_whitespace();
+            let right_ws = index + 6 < bytes.len() && bytes[index + 6].is_ascii_whitespace();
+            if left_ws && right_ws {
+                let filter = input[..index].trim();
+                let select_expr = input[index + 6..].trim();
+                if filter.is_empty() {
+                    return Err("WHERE clause is empty".to_string());
+                }
+                let paths = parse_select_paths(select_expr)?;
+                return Ok((filter, Some(paths)));
+            }
+        }
+
+        index += 1;
+    }
+
+    if in_single_quote {
+        return Err("unterminated string literal".to_string());
+    }
+
+    Ok((input, None))
+}
+
+fn parse_select_paths(input: &str) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    for path in input.replace(',', " ").split_whitespace() {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err("SELECT paths are empty".to_string());
+        }
+        paths.push(trimmed.to_string());
+    }
+
+    if paths.is_empty() {
+        return Err("SELECT clause is empty".to_string());
+    }
+
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -201,6 +283,7 @@ mod tests {
         assert_eq!(ast.predicates.len(), 2);
         assert_eq!(ast.predicates[0].op, Operator::Eq);
         assert_eq!(ast.predicates[1].op, Operator::Ne);
+        assert_eq!(ast.select_paths, None);
     }
 
     #[test]
@@ -208,6 +291,7 @@ mod tests {
         let ast = parse_query("where metadata.namespace == default and spec.nodeName != worker-1")
             .expect("must parse valid query");
         assert_eq!(ast.predicates.len(), 2);
+        assert_eq!(ast.select_paths, None);
     }
 
     #[test]
@@ -215,7 +299,11 @@ mod tests {
         let ast = parse_query("where metadata.name == 'a AND b' and metadata.namespace == demo-a")
             .expect("must parse valid query");
         assert_eq!(ast.predicates.len(), 2);
-        assert_eq!(ast.predicates[0].value, Value::String("a AND b".to_string()));
+        assert_eq!(
+            ast.predicates[0].value,
+            Value::String("a AND b".to_string())
+        );
+        assert_eq!(ast.select_paths, None);
     }
 
     #[test]
@@ -225,6 +313,7 @@ mod tests {
 
         assert_eq!(ast.predicates[0].value, Value::from(2));
         assert_eq!(ast.predicates[1].value, Value::Bool(true));
+        assert_eq!(ast.select_paths, None);
     }
 
     #[test]
@@ -237,9 +326,71 @@ mod tests {
         ];
         let ast = parse_query_args(&args).expect("must parse valid args");
         assert_eq!(ast.predicates.len(), 1);
+        assert_eq!(ast.predicates[0].value, Value::String("demo-a".to_string()));
+        assert_eq!(ast.select_paths, None);
+    }
+
+    #[test]
+    fn parses_select_in_string_query() {
+        let ast = parse_query(
+            "where metadata.namespace == demo-a select metadata.name, metadata.namespace",
+        )
+        .expect("must parse valid query");
         assert_eq!(
-            ast.predicates[0].value,
-            Value::String("demo-a".to_string())
+            ast.select_paths,
+            Some(vec![
+                "metadata.name".to_string(),
+                "metadata.namespace".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_select_in_args_query() {
+        let args = vec![
+            "where".to_string(),
+            "metadata.namespace".to_string(),
+            "==".to_string(),
+            "demo-a".to_string(),
+            "select".to_string(),
+            "metadata.name,metadata.namespace".to_string(),
+        ];
+        let ast = parse_query_args(&args).expect("must parse valid args");
+        assert_eq!(
+            ast.select_paths,
+            Some(vec![
+                "metadata.name".to_string(),
+                "metadata.namespace".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_select_single_path_in_args_query() {
+        let args = vec![
+            "where".to_string(),
+            "metadata.namespace".to_string(),
+            "==".to_string(),
+            "demo-a".to_string(),
+            "select".to_string(),
+            "metadata.name".to_string(),
+        ];
+        let ast = parse_query_args(&args).expect("must parse valid args");
+        assert_eq!(ast.select_paths, Some(vec!["metadata.name".to_string()]));
+    }
+
+    #[test]
+    fn parses_select_paths_separated_by_spaces() {
+        let ast = parse_query(
+            "where metadata.namespace == demo-a select metadata.name metadata.namespace",
+        )
+        .expect("must parse valid query");
+        assert_eq!(
+            ast.select_paths,
+            Some(vec![
+                "metadata.name".to_string(),
+                "metadata.namespace".to_string()
+            ])
         );
     }
 }

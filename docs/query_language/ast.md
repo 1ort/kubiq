@@ -3,6 +3,7 @@
 struct Query {
     resource: String,
     filter: Option<Expr>,
+    select: Option<Vec<Path>>,
 }
 
 enum Expr {

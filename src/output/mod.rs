@@ -18,10 +18,11 @@ pub fn print(
     objects: &[DynamicObject],
     format: OutputFormat,
     detail: DetailLevel,
+    select_paths: Option<&[String]>,
 ) -> Result<(), String> {
     let content = match format {
-        OutputFormat::Table => render_table(objects, detail),
-        OutputFormat::Json => render_json(objects, detail)?,
+        OutputFormat::Table => render_table(objects, detail, select_paths),
+        OutputFormat::Json => render_json(objects, detail, select_paths)?,
     };
     println!("{content}");
     Ok(())
@@ -30,10 +31,11 @@ pub fn print(
 pub fn render_json(
     objects: &[DynamicObject],
     detail: DetailLevel,
+    select_paths: Option<&[String]>,
 ) -> Result<String, String> {
     let rows: Vec<_> = objects
         .iter()
-        .map(|object| project_fields(object, detail))
+        .map(|object| project_fields(object, detail, select_paths))
         .collect();
     serde_json::to_string_pretty(&rows)
         .map_err(|error| format!("failed to serialize json output: {error}"))
@@ -42,10 +44,11 @@ pub fn render_json(
 pub fn render_table(
     objects: &[DynamicObject],
     detail: DetailLevel,
+    select_paths: Option<&[String]>,
 ) -> String {
     let projected: Vec<_> = objects
         .iter()
-        .map(|object| project_fields(object, detail))
+        .map(|object| project_fields(object, detail, select_paths))
         .collect();
     let columns = collect_columns(&projected);
     if columns.is_empty() {
@@ -77,7 +80,21 @@ pub fn render_table(
 fn project_fields(
     object: &DynamicObject,
     detail: DetailLevel,
+    select_paths: Option<&[String]>,
 ) -> std::collections::BTreeMap<String, serde_json::Value> {
+    if let Some(select_paths) = select_paths {
+        let mut projected = std::collections::BTreeMap::new();
+        for path in select_paths {
+            let value = object
+                .fields
+                .get(path)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            projected.insert(path.clone(), value);
+        }
+        return projected;
+    }
+
     match detail {
         DetailLevel::Describe => object.fields.clone(),
         DetailLevel::Summary => {
@@ -186,7 +203,7 @@ mod tests {
             "metadata.namespace".to_string(),
             Value::String("demo-a".to_string()),
         );
-        let out = render_table(&[DynamicObject { fields }], DetailLevel::Describe);
+        let out = render_table(&[DynamicObject { fields }], DetailLevel::Describe, None);
 
         assert!(out.contains("metadata.name"));
         assert!(out.contains("metadata.namespace"));
@@ -201,7 +218,7 @@ mod tests {
             "metadata.name".to_string(),
             Value::String("pod-a".to_string()),
         );
-        let out = render_json(&[DynamicObject { fields }], DetailLevel::Describe)
+        let out = render_json(&[DynamicObject { fields }], DetailLevel::Describe, None)
             .expect("json output must serialize");
 
         assert!(out.starts_with("["));
@@ -225,14 +242,38 @@ mod tests {
                 fields: fields.clone(),
             }],
             DetailLevel::Summary,
+            None,
         );
         assert!(table.contains("| name"));
         assert!(table.contains("pod-a"));
         assert!(!table.contains("metadata.namespace"));
 
-        let json = render_json(&[DynamicObject { fields }], DetailLevel::Summary)
+        let json = render_json(&[DynamicObject { fields }], DetailLevel::Summary, None)
             .expect("json output must serialize");
         assert!(json.contains("\"name\": \"pod-a\""));
         assert!(!json.contains("metadata.namespace"));
+    }
+
+    #[test]
+    fn select_projection_overrides_summary() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.name".to_string(),
+            Value::String("pod-a".to_string()),
+        );
+        fields.insert(
+            "metadata.namespace".to_string(),
+            Value::String("demo-a".to_string()),
+        );
+
+        let select = vec!["metadata.namespace".to_string()];
+        let table = render_table(
+            &[DynamicObject { fields }],
+            DetailLevel::Summary,
+            Some(&select),
+        );
+        assert!(table.contains("metadata.namespace"));
+        assert!(table.contains("demo-a"));
+        assert!(!table.contains("| name"));
     }
 }

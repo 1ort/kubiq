@@ -17,7 +17,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::MissingArgs => write!(
                 f,
-                "usage: mini-kql [--output table|json] [--describe] <resource> where <predicates>"
+                "usage: mini-kql [--output table|json] [--describe] <resource> where <predicates> [select <paths>]"
             ),
             Self::InvalidArgs(error) => write!(f, "invalid args: {error}"),
             Self::Parse(error) => write!(f, "parse error: {error}"),
@@ -48,7 +48,8 @@ pub fn run() -> Result<(), CliError> {
     let objects = k8s::list(resource).map_err(CliError::K8s)?;
     let filtered = engine::evaluate(&plan, &objects);
 
-    output::print(&filtered, format, detail).map_err(CliError::Output)?;
+    output::print(&filtered, format, detail, plan.select_paths.as_deref())
+        .map_err(CliError::Output)?;
     Ok(())
 }
 
