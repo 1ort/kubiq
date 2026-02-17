@@ -85,11 +85,7 @@ fn project_fields(
     if let Some(select_paths) = select_paths {
         let mut projected = std::collections::BTreeMap::new();
         for path in select_paths {
-            let value = object
-                .fields
-                .get(path)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
+            let value = select_value(object, path).unwrap_or(serde_json::Value::Null);
             projected.insert(path.clone(), value);
         }
         return projected;
@@ -107,6 +103,66 @@ fn project_fields(
             projected.insert("name".to_string(), name);
             projected
         }
+    }
+}
+
+fn select_value(
+    object: &DynamicObject,
+    path: &str,
+) -> Option<serde_json::Value> {
+    if let Some(value) = object.fields.get(path) {
+        return Some(value.clone());
+    }
+
+    let prefix = format!("{path}.");
+    let mut nested = serde_json::Value::Object(serde_json::Map::new());
+    let mut found = false;
+
+    for (key, value) in &object.fields {
+        if let Some(suffix) = key.strip_prefix(&prefix) {
+            if suffix.is_empty() {
+                continue;
+            }
+            found = true;
+            let parts: Vec<&str> = suffix.split('.').collect();
+            insert_nested_value(&mut nested, &parts, value.clone());
+        }
+    }
+
+    if found { Some(nested) } else { None }
+}
+
+fn insert_nested_value(
+    node: &mut serde_json::Value,
+    parts: &[&str],
+    value: serde_json::Value,
+) {
+    if parts.is_empty() {
+        *node = value;
+        return;
+    }
+
+    if let Ok(index) = parts[0].parse::<usize>() {
+        if !node.is_array() {
+            *node = serde_json::Value::Array(Vec::new());
+        }
+        if let serde_json::Value::Array(array) = node {
+            while array.len() <= index {
+                array.push(serde_json::Value::Null);
+            }
+            insert_nested_value(&mut array[index], &parts[1..], value);
+        }
+        return;
+    }
+
+    if !node.is_object() {
+        *node = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let serde_json::Value::Object(map) = node {
+        let entry = map
+            .entry(parts[0].to_string())
+            .or_insert(serde_json::Value::Null);
+        insert_nested_value(entry, &parts[1..], value);
     }
 }
 
@@ -275,5 +331,30 @@ mod tests {
         assert!(table.contains("metadata.namespace"));
         assert!(table.contains("demo-a"));
         assert!(!table.contains("| name"));
+    }
+
+    #[test]
+    fn select_parent_path_rebuilds_nested_json() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.name".to_string(),
+            Value::String("pod-a".to_string()),
+        );
+        fields.insert(
+            "metadata.namespace".to_string(),
+            Value::String("demo-a".to_string()),
+        );
+
+        let select = vec!["metadata".to_string()];
+        let json = render_json(
+            &[DynamicObject { fields }],
+            DetailLevel::Summary,
+            Some(&select),
+        )
+        .expect("json output must serialize");
+
+        assert!(json.contains("\"metadata\": {"));
+        assert!(json.contains("\"name\": \"pod-a\""));
+        assert!(json.contains("\"namespace\": \"demo-a\""));
     }
 }
