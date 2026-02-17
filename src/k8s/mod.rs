@@ -10,29 +10,28 @@ use kube::{
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
-use crate::dynamic_object::DynamicObject as EngineObject;
+use crate::{dynamic_object::DynamicObject as EngineObject, error::K8sError};
 
 const LIST_PAGE_SIZE: u32 = 500;
 const MAX_LIST_PAGES: usize = 10_000;
 
-pub fn list(resource: &str) -> Result<Vec<EngineObject>, String> {
+pub fn list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
     let resource = resource.trim();
     if resource.is_empty() {
-        return Err("resource name is empty".to_string());
+        return Err(K8sError::EmptyResourceName);
     }
 
-    let runtime =
-        Runtime::new().map_err(|error| format!("failed to init async runtime: {error}"))?;
+    let runtime = Runtime::new().map_err(|error| K8sError::RuntimeInit(error.to_string()))?;
     runtime.block_on(async_list(resource))
 }
 
-async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
+async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
     let config = Config::infer()
         .await
-        .map_err(|error| format!("failed to infer kube config: {error}"))?;
+        .map_err(|error| K8sError::ConfigInfer(error.to_string()))?;
 
-    let client = Client::try_from(config)
-        .map_err(|error| format!("failed to build kube client: {error}"))?;
+    let client =
+        Client::try_from(config).map_err(|error| K8sError::ClientBuild(error.to_string()))?;
 
     let api_resource = resolve_api_resource(&client, resource).await?;
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
@@ -49,7 +48,10 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
         let mut page = api
             .list(&params)
             .await
-            .map_err(|error| format!("failed to list resource '{resource}': {error}"))?;
+            .map_err(|error| K8sError::ListFailed {
+                resource: resource.to_string(),
+                source: error.to_string(),
+            })?;
 
         all_items.append(&mut page.items);
         continue_token =
@@ -79,11 +81,12 @@ fn build_list_params(
 fn ensure_page_limit(
     resource: &str,
     page_count: usize,
-) -> Result<(), String> {
+) -> Result<(), K8sError> {
     if page_count > MAX_LIST_PAGES {
-        return Err(format!(
-            "pagination for resource '{resource}' exceeded max pages ({MAX_LIST_PAGES})"
-        ));
+        return Err(K8sError::PaginationExceeded {
+            resource: resource.to_string(),
+            max_pages: MAX_LIST_PAGES,
+        });
     }
     Ok(())
 }
@@ -92,17 +95,17 @@ fn next_continue_token(
     resource: &str,
     current_token: Option<&str>,
     raw_next_token: Option<String>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, K8sError> {
     let next_token = raw_next_token.filter(|token| !token.is_empty());
     if next_token.is_none() {
         return Ok(None);
     }
 
     if current_token == next_token.as_deref() {
-        return Err(format!(
-            "pagination for resource '{resource}' got stuck on continue token '{token}'",
-            token = next_token.as_deref().unwrap_or_default()
-        ));
+        return Err(K8sError::PaginationStuck {
+            resource: resource.to_string(),
+            token: next_token.as_deref().unwrap_or_default().to_string(),
+        });
     }
 
     Ok(next_token)
@@ -111,11 +114,11 @@ fn next_continue_token(
 async fn resolve_api_resource(
     client: &Client,
     resource: &str,
-) -> Result<ApiResource, String> {
+) -> Result<ApiResource, K8sError> {
     let discovery = discovery::Discovery::new(client.clone())
         .run()
         .await
-        .map_err(|error| format!("discovery failed: {error}"))?;
+        .map_err(|error| K8sError::DiscoveryRun(error.to_string()))?;
 
     for group in discovery.groups() {
         for (api_resource, capabilities) in group.recommended_resources() {
@@ -132,7 +135,9 @@ async fn resolve_api_resource(
         }
     }
 
-    Err(format!("resource '{resource}' was not found via discovery"))
+    Err(K8sError::ResourceNotFound {
+        resource: resource.to_string(),
+    })
 }
 
 fn dynamic_to_engine_object(object: DynamicObject) -> EngineObject {
@@ -212,6 +217,7 @@ mod tests {
     use super::{
         MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value, next_continue_token,
     };
+    use crate::error::K8sError;
 
     #[test]
     fn flattens_nested_objects_to_dot_paths() {
@@ -259,12 +265,12 @@ mod tests {
     #[test]
     fn page_limit_rejects_overflow() {
         let result = ensure_page_limit("pods", MAX_LIST_PAGES + 1);
-        assert!(result.is_err());
-        assert!(
-            result
-                .err()
-                .unwrap_or_default()
-                .contains("exceeded max pages")
+        assert_eq!(
+            result,
+            Err(K8sError::PaginationExceeded {
+                resource: "pods".to_string(),
+                max_pages: MAX_LIST_PAGES
+            })
         );
     }
 
@@ -291,7 +297,18 @@ mod tests {
     #[test]
     fn next_continue_token_rejects_same_token() {
         let result = next_continue_token("pods", Some("token-a"), Some("token-a".to_string()));
-        assert!(result.is_err());
-        assert!(result.err().unwrap_or_default().contains("got stuck"));
+        assert_eq!(
+            result,
+            Err(K8sError::PaginationStuck {
+                resource: "pods".to_string(),
+                token: "token-a".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn empty_resource_name_is_typed_error() {
+        let result = super::list("  ");
+        assert_eq!(result, Err(K8sError::EmptyResourceName));
     }
 }

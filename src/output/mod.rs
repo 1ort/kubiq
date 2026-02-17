@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::dynamic_object::DynamicObject;
+use crate::error::OutputError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -20,7 +21,7 @@ pub fn print(
     format: OutputFormat,
     detail: DetailLevel,
     select_paths: Option<&[String]>,
-) -> Result<(), String> {
+) -> Result<(), OutputError> {
     let content = match format {
         OutputFormat::Table => render_table(objects, detail, select_paths),
         OutputFormat::Json => render_json(objects, detail, select_paths)?,
@@ -34,26 +35,25 @@ pub fn render_json(
     objects: &[DynamicObject],
     detail: DetailLevel,
     select_paths: Option<&[String]>,
-) -> Result<String, String> {
+) -> Result<String, OutputError> {
     let rows: Vec<_> = objects
         .iter()
         .map(|object| project_fields(object, detail, select_paths))
         .collect();
     serde_json::to_string_pretty(&rows)
-        .map_err(|error| format!("failed to serialize json output: {error}"))
+        .map_err(|error| OutputError::JsonSerialize(error.to_string()))
 }
 
 pub fn render_yaml(
     objects: &[DynamicObject],
     detail: DetailLevel,
     select_paths: Option<&[String]>,
-) -> Result<String, String> {
+) -> Result<String, OutputError> {
     let rows: Vec<_> = objects
         .iter()
         .map(|object| project_fields(object, detail, select_paths))
         .collect();
-    serde_yaml::to_string(&rows)
-        .map_err(|error| format!("failed to serialize yaml output: {error}"))
+    serde_yaml::to_string(&rows).map_err(|error| OutputError::YamlSerialize(error.to_string()))
 }
 
 pub fn render_table(

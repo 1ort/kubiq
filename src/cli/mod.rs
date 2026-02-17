@@ -1,39 +1,6 @@
 use clap::{Parser, ValueEnum, error::ErrorKind};
 
-use crate::{engine, k8s, output, parser};
-
-#[derive(Debug)]
-pub enum CliError {
-    InvalidArgs(String),
-    Parse(String),
-    K8s(String),
-    Output(String),
-}
-
-impl std::fmt::Display for CliError {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        match self {
-            Self::InvalidArgs(error) => write!(
-                f,
-                "invalid args: {error}\n\nTip: run `kubiq --help` to see usage and examples."
-            ),
-            Self::Parse(error) => write!(
-                f,
-                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [select <paths>]`.\nExample: `kubiq pods where metadata.namespace == demo-a select metadata.name`"
-            ),
-            Self::K8s(error) => write!(f, "{}\n\n{}", format_k8s_error(error), k8s_tip(error)),
-            Self::Output(error) => write!(
-                f,
-                "output error: {error}\n\nTip: supported formats are `table`, `json`, `yaml`."
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CliError {}
+use crate::{engine, error::CliError, k8s, output, parser};
 
 #[derive(Clone, Debug, ValueEnum)]
 enum OutputArg {
@@ -128,25 +95,13 @@ fn map_output_format(format: OutputArg) -> output::OutputFormat {
     }
 }
 
-fn format_k8s_error(error: &str) -> String {
-    format!("k8s error: {error}")
-}
-
-fn k8s_tip(error: &str) -> &'static str {
-    if error.contains("client error (Connect)") || error.contains("Unable to connect") {
-        return "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info";
-    }
-    if error.contains("was not found via discovery") {
-        return "Tip: resource was not found. Check plural name via:\n  kubectl api-resources";
-    }
-    "Tip: verify cluster access with `kubectl get ns` and then retry."
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use super::{CliArgs, CliError, OutputArg, parse_query_tokens};
+    use crate::error::{CliError, K8sError};
+
+    use super::{CliArgs, OutputArg, parse_query_tokens};
 
     #[test]
     fn parses_flags_with_clap() {
@@ -201,11 +156,22 @@ mod tests {
 
     #[test]
     fn k8s_error_contains_connectivity_tip() {
-        let err =
-            CliError::K8s("discovery failed: ServiceError: client error (Connect)".to_string());
+        let err = CliError::K8s(K8sError::DiscoveryRun(
+            "ServiceError: client error (Connect)".to_string(),
+        ));
         let rendered = err.to_string();
         assert!(rendered.contains("Kubernetes API is unreachable"));
         assert!(rendered.contains("kubectl cluster-info"));
+    }
+
+    #[test]
+    fn k8s_error_not_found_contains_api_resources_tip() {
+        let err = CliError::K8s(K8sError::ResourceNotFound {
+            resource: "podsx".to_string(),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("resource was not found"));
+        assert!(rendered.contains("kubectl api-resources"));
     }
 
     #[test]
