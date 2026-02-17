@@ -1,3 +1,12 @@
+use nom::{
+    IResult, Parser,
+    branch::alt,
+    bytes::complete::{tag, tag_no_case, take_while, take_while1},
+    character::complete::{char, multispace0, multispace1},
+    combinator::{all_consuming, map, opt, recognize, value},
+    multi::{many0, separated_list1},
+    sequence::{delimited, preceded, terminated, tuple},
+};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,48 +30,17 @@ pub enum Operator {
 
 pub fn parse_query(input: &str) -> Result<QueryAst, String> {
     let trimmed = input.trim();
-    let where_prefix = "where ";
-
-    if !trimmed.to_ascii_lowercase().starts_with(where_prefix) {
+    if trimmed.is_empty() {
+        return Err("WHERE clause is empty".to_string());
+    }
+    if !trimmed.to_ascii_lowercase().starts_with("where") {
         return Err("query must start with WHERE".to_string());
     }
 
-    let expr = trimmed[where_prefix.len()..].trim();
-    if expr.is_empty() {
-        return Err("WHERE clause is empty".to_string());
+    match all_consuming(delimited(multispace0, query_ast, multispace0)).parse(trimmed) {
+        Ok((_, ast)) => Ok(ast),
+        Err(_) => Err("invalid query syntax".to_string()),
     }
-
-    let (filter_expr, select_paths) = split_select_clause(expr)?;
-
-    let mut predicates = Vec::new();
-    for segment in split_and_predicates(filter_expr)? {
-        let segment = segment.trim();
-
-        if let Some((left, right)) = segment.split_once("==") {
-            predicates.push(Predicate {
-                path: left.trim().to_string(),
-                op: Operator::Eq,
-                value: parse_value(right.trim())?,
-            });
-            continue;
-        }
-
-        if let Some((left, right)) = segment.split_once("!=") {
-            predicates.push(Predicate {
-                path: left.trim().to_string(),
-                op: Operator::Ne,
-                value: parse_value(right.trim())?,
-            });
-            continue;
-        }
-
-        return Err(format!("unsupported predicate: {segment}"));
-    }
-
-    Ok(QueryAst {
-        predicates,
-        select_paths,
-    })
 }
 
 pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
@@ -72,201 +50,136 @@ pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
     if !args[0].eq_ignore_ascii_case("where") {
         return Err("query must start with WHERE".to_string());
     }
-    if args.len() < 4 {
-        return Err("incomplete WHERE clause".to_string());
-    }
 
-    let mut predicates = Vec::new();
-    let mut select_paths = None;
-    let mut index = 1;
-    while index < args.len() {
-        if args[index].eq_ignore_ascii_case("select") {
-            select_paths = Some(parse_select_paths(&args[index + 1..].join(" "))?);
-            index = args.len();
-            break;
-        }
-
-        if index + 2 >= args.len() {
-            return Err("incomplete WHERE clause".to_string());
-        }
-
-        let path = args[index].trim().to_string();
-        let op_token = args[index + 1].as_str();
-        let value = parse_value(args[index + 2].trim())?;
-
-        let op = match op_token {
-            "==" => Operator::Eq,
-            "!=" => Operator::Ne,
-            _ => return Err(format!("unsupported operator: {op_token}")),
-        };
-
-        if path.is_empty() {
-            return Err("predicate path is empty".to_string());
-        }
-
-        predicates.push(Predicate { path, op, value });
-        index += 3;
-
-        if index == args.len() {
-            break;
-        }
-
-        if args[index].eq_ignore_ascii_case("select") {
-            select_paths = Some(parse_select_paths(&args[index + 1..].join(" "))?);
-            index = args.len();
-            break;
-        }
-
-        if !args[index].eq_ignore_ascii_case("and") {
-            return Err(format!("expected AND or SELECT, got: {}", args[index]));
-        }
-        index += 1;
-    }
-
-    if predicates.is_empty() || index != args.len() {
-        return Err("incomplete WHERE clause".to_string());
-    }
-
-    Ok(QueryAst {
-        predicates,
-        select_paths,
-    })
+    parse_query(&args.join(" "))
 }
 
-fn parse_value(input: &str) -> Result<Value, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err("predicate value is empty".to_string());
+fn query_ast(input: &str) -> IResult<&str, QueryAst> {
+    let (input, predicates) = where_clause(input)?;
+    let (input, select_paths) = opt(preceded(multispace1, select_clause)).parse(input)?;
+
+    Ok((
+        input,
+        QueryAst {
+            predicates,
+            select_paths,
+        },
+    ))
+}
+
+fn where_clause(input: &str) -> IResult<&str, Vec<Predicate>> {
+    preceded(
+        terminated(tag_no_case("where"), multispace1),
+        separated_list1(and_separator, predicate),
+    )
+    .parse(input)
+}
+
+fn and_separator(input: &str) -> IResult<&str, ()> {
+    value((), tuple((multispace1, tag_no_case("and"), multispace1))).parse(input)
+}
+
+fn predicate(input: &str) -> IResult<&str, Predicate> {
+    let (input, path) = path(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, op) = operator(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, value) = predicate_value(input)?;
+
+    Ok((input, Predicate { path, op, value }))
+}
+
+fn operator(input: &str) -> IResult<&str, Operator> {
+    alt((
+        value(Operator::Eq, tag("==")),
+        value(Operator::Ne, tag("!=")),
+    ))
+    .parse(input)
+}
+
+fn select_clause(input: &str) -> IResult<&str, Vec<String>> {
+    preceded(
+        terminated(tag_no_case("select"), multispace1),
+        separated_list1(select_separator, path),
+    )
+    .parse(input)
+}
+
+fn select_separator(input: &str) -> IResult<&str, ()> {
+    alt((
+        value((), delimited(multispace0, char(','), multispace0)),
+        value((), multispace1),
+    ))
+    .parse(input)
+}
+
+fn path(input: &str) -> IResult<&str, String> {
+    map(
+        recognize(tuple((ident, many0(preceded(char('.'), ident))))),
+        str::to_string,
+    )
+    .parse(input)
+}
+
+fn ident(input: &str) -> IResult<&str, &str> {
+    recognize(tuple((
+        take_while1(is_ident_start),
+        take_while(is_ident_char),
+    )))
+    .parse(input)
+}
+
+fn is_ident_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+fn predicate_value(input: &str) -> IResult<&str, Value> {
+    alt((quoted_string_value, bare_value)).parse(input)
+}
+
+fn quoted_string_value(input: &str) -> IResult<&str, Value> {
+    map(
+        delimited(char('\''), take_while(|c| c != '\''), char('\'')),
+        |s: &str| Value::String(s.to_string()),
+    )
+    .parse(input)
+}
+
+fn bare_value(input: &str) -> IResult<&str, Value> {
+    map(
+        take_while1(|c: char| !c.is_ascii_whitespace()),
+        parse_scalar_value,
+    )
+    .parse(input)
+}
+
+fn parse_scalar_value(token: &str) -> Value {
+    if token.eq_ignore_ascii_case("true") {
+        return Value::Bool(true);
+    }
+    if token.eq_ignore_ascii_case("false") {
+        return Value::Bool(false);
     }
 
-    if trimmed.starts_with('\'') {
-        if !trimmed.ends_with('\'') || trimmed.len() < 2 {
-            return Err("unterminated string literal".to_string());
-        }
-        return Ok(Value::String(trimmed[1..trimmed.len() - 1].to_string()));
+    if let Ok(number) = token.parse::<i64>() {
+        return Value::from(number);
     }
 
-    if trimmed.eq_ignore_ascii_case("true") {
-        return Ok(Value::Bool(true));
+    if let Ok(number) = token.parse::<u64>() {
+        return Value::from(number);
     }
 
-    if trimmed.eq_ignore_ascii_case("false") {
-        return Ok(Value::Bool(false));
-    }
-
-    if let Ok(number) = trimmed.parse::<i64>() {
-        return Ok(Value::from(number));
-    }
-
-    if let Ok(number) = trimmed.parse::<u64>() {
-        return Ok(Value::from(number));
-    }
-
-    if let Ok(number) = trimmed.parse::<f64>()
+    if let Ok(number) = token.parse::<f64>()
         && let Some(number) = serde_json::Number::from_f64(number)
     {
-        return Ok(Value::Number(number));
+        return Value::Number(number);
     }
 
-    Ok(Value::String(trimmed.to_string()))
-}
-
-fn split_and_predicates(input: &str) -> Result<Vec<&str>, String> {
-    let bytes = input.as_bytes();
-    let mut segments = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut in_single_quote = false;
-
-    while index < bytes.len() {
-        if bytes[index] == b'\'' {
-            in_single_quote = !in_single_quote;
-            index += 1;
-            continue;
-        }
-
-        if !in_single_quote
-            && index + 3 <= bytes.len()
-            && bytes[index..index + 3].eq_ignore_ascii_case(b"and")
-        {
-            let left_ws = index > 0 && bytes[index - 1].is_ascii_whitespace();
-            let right_ws = index + 3 < bytes.len() && bytes[index + 3].is_ascii_whitespace();
-            if left_ws && right_ws {
-                segments.push(input[start..index].trim());
-                index += 3;
-                while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-                    index += 1;
-                }
-                start = index;
-                continue;
-            }
-        }
-
-        index += 1;
-    }
-
-    if in_single_quote {
-        return Err("unterminated string literal".to_string());
-    }
-
-    segments.push(input[start..].trim());
-    Ok(segments)
-}
-
-fn split_select_clause(input: &str) -> Result<(&str, Option<Vec<String>>), String> {
-    let bytes = input.as_bytes();
-    let mut index = 0;
-    let mut in_single_quote = false;
-
-    while index < bytes.len() {
-        if bytes[index] == b'\'' {
-            in_single_quote = !in_single_quote;
-            index += 1;
-            continue;
-        }
-
-        if !in_single_quote
-            && index + 6 <= bytes.len()
-            && bytes[index..index + 6].eq_ignore_ascii_case(b"select")
-        {
-            let left_ws = index > 0 && bytes[index - 1].is_ascii_whitespace();
-            let right_ws = index + 6 < bytes.len() && bytes[index + 6].is_ascii_whitespace();
-            if left_ws && right_ws {
-                let filter = input[..index].trim();
-                let select_expr = input[index + 6..].trim();
-                if filter.is_empty() {
-                    return Err("WHERE clause is empty".to_string());
-                }
-                let paths = parse_select_paths(select_expr)?;
-                return Ok((filter, Some(paths)));
-            }
-        }
-
-        index += 1;
-    }
-
-    if in_single_quote {
-        return Err("unterminated string literal".to_string());
-    }
-
-    Ok((input, None))
-}
-
-fn parse_select_paths(input: &str) -> Result<Vec<String>, String> {
-    let mut paths = Vec::new();
-    for path in input.replace(',', " ").split_whitespace() {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            return Err("SELECT paths are empty".to_string());
-        }
-        paths.push(trimmed.to_string());
-    }
-
-    if paths.is_empty() {
-        return Err("SELECT clause is empty".to_string());
-    }
-
-    Ok(paths)
+    Value::String(token.to_string())
 }
 
 #[cfg(test)]
