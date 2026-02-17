@@ -18,17 +18,35 @@ use crate::{
 const LIST_PAGE_SIZE: u32 = 500;
 const MAX_LIST_PAGES: usize = 10_000;
 
-pub fn list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListQueryOptions {
+    pub field_selector: Option<String>,
+    pub label_selector: Option<String>,
+}
+
+impl ListQueryOptions {
+    fn has_selectors(&self) -> bool {
+        self.field_selector.is_some() || self.label_selector.is_some()
+    }
+}
+
+pub fn list(
+    resource: &str,
+    options: &ListQueryOptions,
+) -> Result<Vec<EngineObject>, K8sError> {
     let resource = resource.trim();
     if resource.is_empty() {
         return Err(K8sError::EmptyResourceName);
     }
 
     let runtime = Runtime::new().map_err(|source| K8sError::RuntimeInit { source })?;
-    runtime.block_on(async_list(resource))
+    runtime.block_on(async_list(resource, options))
 }
 
-async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
+async fn async_list(
+    resource: &str,
+    options: &ListQueryOptions,
+) -> Result<Vec<EngineObject>, K8sError> {
     let config = Config::infer()
         .await
         .map_err(|source| K8sError::ConfigInfer {
@@ -42,6 +60,22 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
     let api_resource = resolve_api_resource(&client, resource).await?;
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
 
+    let items = match list_pages(resource, &api, options).await {
+        Ok(items) => items,
+        Err(error) if options.has_selectors() && should_retry_without_selectors(&error) => {
+            list_pages(resource, &api, &ListQueryOptions::default()).await?
+        }
+        Err(error) => return Err(error),
+    };
+
+    Ok(items.into_iter().map(dynamic_to_engine_object).collect())
+}
+
+async fn list_pages(
+    resource: &str,
+    api: &Api<DynamicObject>,
+    options: &ListQueryOptions,
+) -> Result<Vec<DynamicObject>, K8sError> {
     let mut all_items = Vec::new();
     let mut continue_token: Option<String> = None;
     let mut page_count: usize = 0;
@@ -50,7 +84,7 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
         page_count += 1;
         ensure_page_limit(resource, page_count)?;
 
-        let params = build_list_params(LIST_PAGE_SIZE, continue_token.as_deref());
+        let params = build_list_params(LIST_PAGE_SIZE, continue_token.as_deref(), options);
         let mut page = api
             .list(&params)
             .await
@@ -64,19 +98,23 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
         }
     }
 
-    Ok(all_items
-        .into_iter()
-        .map(dynamic_to_engine_object)
-        .collect())
+    Ok(all_items)
 }
 
 fn build_list_params(
     limit: u32,
     continue_token: Option<&str>,
+    options: &ListQueryOptions,
 ) -> ListParams {
     let mut params = ListParams::default().limit(limit);
     if let Some(token) = continue_token {
         params = params.continue_token(token);
+    }
+    if let Some(selector) = options.field_selector.as_deref() {
+        params = params.fields(selector);
+    }
+    if let Some(selector) = options.label_selector.as_deref() {
+        params = params.labels(selector);
     }
     params
 }
@@ -95,6 +133,19 @@ fn map_list_error(
     K8sError::ListFailed {
         resource: resource.to_string(),
         source: boxed_error(source),
+    }
+}
+
+fn should_retry_without_selectors(error: &K8sError) -> bool {
+    match error {
+        K8sError::ListFailed { source, .. } => {
+            let message = source.to_string();
+            message.contains("BadRequest")
+                || message.contains("field label not supported")
+                || message.contains("not a known field selector")
+                || message.contains("field selector")
+        }
+        _ => false,
     }
 }
 
@@ -252,8 +303,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value,
-        is_api_unreachable_error_message, next_continue_token,
+        ListQueryOptions, MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value,
+        is_api_unreachable_error_message, next_continue_token, should_retry_without_selectors,
     };
     use crate::error::K8sError;
 
@@ -282,16 +333,33 @@ mod tests {
 
     #[test]
     fn builds_list_params_with_limit_and_continue_token() {
-        let params = build_list_params(250, Some("next-token"));
+        let params = build_list_params(250, Some("next-token"), &ListQueryOptions::default());
         assert_eq!(params.limit, Some(250));
         assert_eq!(params.continue_token.as_deref(), Some("next-token"));
     }
 
     #[test]
     fn builds_list_params_with_limit_only() {
-        let params = build_list_params(250, None);
+        let params = build_list_params(250, None, &ListQueryOptions::default());
         assert_eq!(params.limit, Some(250));
         assert_eq!(params.continue_token, None);
+    }
+
+    #[test]
+    fn builds_list_params_with_selectors() {
+        let params = build_list_params(
+            250,
+            None,
+            &ListQueryOptions {
+                field_selector: Some("metadata.namespace=demo-a".to_string()),
+                label_selector: Some("app=api".to_string()),
+            },
+        );
+        assert_eq!(
+            params.field_selector.as_deref(),
+            Some("metadata.namespace=demo-a")
+        );
+        assert_eq!(params.label_selector.as_deref(), Some("app=api"));
     }
 
     #[test]
@@ -344,7 +412,7 @@ mod tests {
 
     #[test]
     fn empty_resource_name_is_typed_error() {
-        let result = super::list("  ");
+        let result = super::list("  ", &ListQueryOptions::default());
         assert!(matches!(result, Err(K8sError::EmptyResourceName)));
     }
 
@@ -367,5 +435,16 @@ mod tests {
         assert!(!is_api_unreachable_error_message(
             "forbidden: user is not authorized"
         ));
+    }
+
+    #[test]
+    fn retries_without_selectors_on_bad_request_errors() {
+        let error = K8sError::ListFailed {
+            resource: "pods".to_string(),
+            source: crate::error::boxed_error(std::io::Error::other(
+                "BadRequest: field label not supported",
+            )),
+        };
+        assert!(should_retry_without_selectors(&error));
     }
 }

@@ -8,3 +8,4 @@
 6. MVP готов — ✅
 7. Pagination/batching для `list` реализованы — ✅
 8. Typed error hierarchy (`CliError`/`K8sError`/`OutputError`) реализована — ✅
+9. Server-side filtering (safe pushdown subset) реализован — ✅

@@ -1,4 +1,5 @@
 use clap::{Parser, ValueEnum, error::ErrorKind};
+use serde_json::Value;
 
 use crate::{engine, error::CliError, k8s, output, parser};
 
@@ -40,7 +41,8 @@ pub fn run() -> Result<(), CliError> {
     let ast = parse_query_tokens(&args.query)?;
 
     let plan = engine::build_plan(ast);
-    let objects = k8s::list(&args.resource).map_err(CliError::K8s)?;
+    let query_options = build_list_query_options(&plan);
+    let objects = k8s::list(&args.resource, &query_options).map_err(CliError::K8s)?;
     let filtered = engine::evaluate(&plan, &objects);
 
     let detail = if args.describe {
@@ -95,13 +97,81 @@ fn map_output_format(format: OutputArg) -> output::OutputFormat {
     }
 }
 
+fn build_list_query_options(plan: &engine::QueryPlan) -> k8s::ListQueryOptions {
+    let mut field_selectors = Vec::new();
+    let mut label_selectors = Vec::new();
+
+    for predicate in &plan.predicates {
+        if !matches!(predicate.op, parser::Operator::Eq) {
+            continue;
+        }
+
+        let Some(value) = selector_value(&predicate.value) else {
+            continue;
+        };
+        if !is_selector_value_safe(&value) {
+            continue;
+        }
+
+        if predicate.path.eq_ignore_ascii_case("metadata.name")
+            || predicate.path.eq_ignore_ascii_case("metadata.namespace")
+        {
+            field_selectors.push(format!("{}={value}", predicate.path));
+            continue;
+        }
+
+        if let Some(label_key) = predicate.path.strip_prefix("metadata.labels.")
+            && is_label_key_safe(label_key)
+        {
+            label_selectors.push(format!("{label_key}={value}"));
+        }
+    }
+
+    k8s::ListQueryOptions {
+        field_selector: join_selector_parts(field_selectors),
+        label_selector: join_selector_parts(label_selectors),
+    }
+}
+
+fn selector_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn is_selector_value_safe(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains(',')
+        && !value.contains('=')
+        && !value.contains('!')
+        && !value.chars().any(char::is_whitespace)
+}
+
+fn is_label_key_safe(key: &str) -> bool {
+    !key.is_empty() && !key.contains(',') && !key.chars().any(char::is_whitespace)
+}
+
+fn join_selector_parts(parts: Vec<String>) -> Option<String> {
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(","))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use serde_json::Value;
 
     use crate::error::{CliError, K8sError, OutputError, boxed_error};
 
-    use super::{CliArgs, OutputArg, parse_query_tokens};
+    use super::{CliArgs, OutputArg, build_list_query_options, parse_query_tokens};
+    use crate::{
+        engine::QueryPlan,
+        parser::{Operator, Predicate},
+    };
 
     #[test]
     fn parses_flags_with_clap() {
@@ -211,5 +281,86 @@ mod tests {
         let rendered = err.to_string();
         assert!(rendered.contains("output error"));
         assert!(rendered.contains("supported formats are `table`, `json`, `yaml`"));
+    }
+
+    #[test]
+    fn builds_server_side_field_selector_for_metadata_fields() {
+        let plan = QueryPlan {
+            predicates: vec![
+                Predicate {
+                    path: "metadata.name".to_string(),
+                    op: Operator::Eq,
+                    value: Value::String("worker-a".to_string()),
+                },
+                Predicate {
+                    path: "metadata.namespace".to_string(),
+                    op: Operator::Eq,
+                    value: Value::String("demo-a".to_string()),
+                },
+            ],
+            select_paths: None,
+        };
+
+        let options = build_list_query_options(&plan);
+        assert_eq!(
+            options.field_selector.as_deref(),
+            Some("metadata.name=worker-a,metadata.namespace=demo-a")
+        );
+        assert_eq!(options.label_selector, None);
+    }
+
+    #[test]
+    fn builds_server_side_label_selector_for_labels() {
+        let plan = QueryPlan {
+            predicates: vec![Predicate {
+                path: "metadata.labels.app".to_string(),
+                op: Operator::Eq,
+                value: Value::String("api".to_string()),
+            }],
+            select_paths: None,
+        };
+
+        let options = build_list_query_options(&plan);
+        assert_eq!(options.field_selector, None);
+        assert_eq!(options.label_selector.as_deref(), Some("app=api"));
+    }
+
+    #[test]
+    fn does_not_push_down_ne_or_unsafe_values() {
+        let plan = QueryPlan {
+            predicates: vec![
+                Predicate {
+                    path: "metadata.name".to_string(),
+                    op: Operator::Ne,
+                    value: Value::String("worker-a".to_string()),
+                },
+                Predicate {
+                    path: "metadata.labels.app".to_string(),
+                    op: Operator::Eq,
+                    value: Value::String("api,core".to_string()),
+                },
+            ],
+            select_paths: None,
+        };
+
+        let options = build_list_query_options(&plan);
+        assert_eq!(options.field_selector, None);
+        assert_eq!(options.label_selector, None);
+    }
+
+    #[test]
+    fn does_not_push_down_non_string_values() {
+        let plan = QueryPlan {
+            predicates: vec![Predicate {
+                path: "metadata.namespace".to_string(),
+                op: Operator::Eq,
+                value: Value::Bool(true),
+            }],
+            select_paths: None,
+        };
+
+        let options = build_list_query_options(&plan);
+        assert_eq!(options.field_selector, None);
+        assert_eq!(options.label_selector, None);
     }
 }
