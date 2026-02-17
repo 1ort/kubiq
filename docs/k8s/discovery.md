@@ -7,4 +7,4 @@
 3. Найти ресурс по plural имени (`pods`, `widgets`, ...)
 4. Построить `ApiResource` через GVK + plural
 
-Результат discovery используется для list-запроса к любому ресурсу (core и CRD).
+Результат discovery используется для paged list-запросов к любому ресурсу (core и CRD).

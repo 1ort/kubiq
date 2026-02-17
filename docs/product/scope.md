@@ -4,6 +4,7 @@
 
 - Любые ресурсы Kubernetes: core + CRD (через discovery)
 - Только list-запросы
+- Автоматическая pagination/batching для больших `list` (через `limit/continue`)
 - Фильтрация `where`
 - Операторы: `==`, `!=`
 - Логика: `AND`

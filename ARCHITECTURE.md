@@ -10,7 +10,7 @@ AST
  ↓
 QueryPlan
  ↓
-K8s fetch (discovery + list)
+K8s fetch (discovery + paged list)
  ↓
 Evaluator (`where`)
  ↓
@@ -33,7 +33,7 @@ Output (summary/describe/select, table/json/yaml)
 
 ### K8s layer
 - Discovery ресурсов (core + CRD)
-- Dynamic list fetch
+- Dynamic paged list fetch (`limit/continue`)
 - Преобразование в внутренний `DynamicObject`
 
 ### Output
