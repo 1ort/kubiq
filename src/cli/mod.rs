@@ -176,6 +176,18 @@ mod tests {
     }
 
     #[test]
+    fn k8s_error_includes_source_details_in_rendered_message() {
+        let err = CliError::K8s(K8sError::ConfigInfer {
+            source: boxed_error(std::io::Error::other(
+                "no such file or directory: /tmp/missing-kubeconfig",
+            )),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("failed to infer kube config"));
+        assert!(rendered.contains("missing-kubeconfig"));
+    }
+
+    #[test]
     fn parse_error_contains_query_example_tip() {
         let err = CliError::Parse("invalid query syntax".to_string());
         let rendered = err.to_string();

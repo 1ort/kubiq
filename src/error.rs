@@ -15,27 +15,27 @@ where
 pub enum K8sError {
     #[error("resource name is empty")]
     EmptyResourceName,
-    #[error("failed to init async runtime")]
+    #[error("failed to init async runtime: {source}")]
     RuntimeInit {
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to infer kube config")]
+    #[error("failed to infer kube config: {source}")]
     ConfigInfer {
         #[source]
         source: BoxError,
     },
-    #[error("failed to build kube client")]
+    #[error("failed to build kube client: {source}")]
     ClientBuild {
         #[source]
         source: BoxError,
     },
-    #[error("discovery failed")]
+    #[error("discovery failed: {source}")]
     DiscoveryRun {
         #[source]
         source: BoxError,
     },
-    #[error("kubernetes api is unreachable during {stage}")]
+    #[error("kubernetes api is unreachable during {stage}: {source}")]
     ApiUnreachable {
         stage: &'static str,
         #[source]
@@ -43,7 +43,7 @@ pub enum K8sError {
     },
     #[error("resource '{resource}' was not found via discovery")]
     ResourceNotFound { resource: String },
-    #[error("failed to list resource '{resource}'")]
+    #[error("failed to list resource '{resource}': {source}")]
     ListFailed {
         resource: String,
         #[source]
