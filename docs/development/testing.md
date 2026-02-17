@@ -5,6 +5,7 @@
 - parser
 - path
 - evaluator
+- k8s pagination helpers (`limit/continue`, guards)
 
 ## Integration tests (minikube)
 
@@ -49,3 +50,5 @@ kubectl get widgets -A
 ```bash
 KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```
+
+E2E тесты проверяют pipeline на реальном кластере (core + CRD). Логика пагинации покрыта unit-тестами в `src/k8s/mod.rs`.

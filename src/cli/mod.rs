@@ -47,7 +47,13 @@ enum OutputArg {
 #[command(about = "Query Kubernetes resources with where/select")]
 #[command(version)]
 struct CliArgs {
-    #[arg(short = 'o', long = "output", default_value = "table", value_enum, ignore_case = true)]
+    #[arg(
+        short = 'o',
+        long = "output",
+        default_value = "table",
+        value_enum,
+        ignore_case = true
+    )]
     output: OutputArg,
 
     #[arg(short = 'd', long = "describe")]
@@ -91,7 +97,10 @@ fn parse_cli_args() -> Result<Option<CliArgs>, CliError> {
     match CliArgs::try_parse() {
         Ok(args) => Ok(Some(args)),
         Err(error) => {
-            if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
                 print!("{error}");
                 return Ok(None);
             }
@@ -101,7 +110,10 @@ fn parse_cli_args() -> Result<Option<CliArgs>, CliError> {
 }
 
 fn parse_query_tokens(tokens: &[String]) -> Result<parser::QueryAst, CliError> {
-    if tokens.first().is_some_and(|token| token.eq_ignore_ascii_case("where")) {
+    if tokens
+        .first()
+        .is_some_and(|token| token.eq_ignore_ascii_case("where"))
+    {
         parser::parse_query_args(tokens).map_err(CliError::Parse)
     } else {
         parser::parse_query(&tokens.join(" ")).map_err(CliError::Parse)
@@ -158,7 +170,16 @@ mod tests {
 
     #[test]
     fn parses_output_enum_case_insensitive() {
-        let args = CliArgs::parse_from(["kubiq", "--output", "YAML", "pods", "where", "metadata.name", "==", "pod-a"]);
+        let args = CliArgs::parse_from([
+            "kubiq",
+            "--output",
+            "YAML",
+            "pods",
+            "where",
+            "metadata.name",
+            "==",
+            "pod-a",
+        ]);
         assert!(matches!(args.output, OutputArg::Yaml));
     }
 
@@ -180,7 +201,8 @@ mod tests {
 
     #[test]
     fn k8s_error_contains_connectivity_tip() {
-        let err = CliError::K8s("discovery failed: ServiceError: client error (Connect)".to_string());
+        let err =
+            CliError::K8s("discovery failed: ServiceError: client error (Connect)".to_string());
         let rendered = err.to_string();
         assert!(rendered.contains("Kubernetes API is unreachable"));
         assert!(rendered.contains("kubectl cluster-info"));

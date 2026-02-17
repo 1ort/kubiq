@@ -10,6 +10,7 @@ Implemented:
 
 - Dynamic resource discovery (core + CRD)
 - `list` queries
+- Automatic pagination/batching for large `list` responses
 - `where` filtering with `==`, `!=`, `AND`
 - `select` projection
 - Output formats: `table`, `json`, `yaml`
