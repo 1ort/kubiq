@@ -13,6 +13,7 @@
 9. `development/error_handling.md`
 10. `plans/mvp_plan.md`
 11. `plans/roadmap_v1.md`
+12. `plans/v0_2_0_plan.md`
 
 ## Статус
 
