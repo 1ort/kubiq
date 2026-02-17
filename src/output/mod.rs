@@ -107,7 +107,7 @@ fn project_fields(
     }
 
     match detail {
-        DetailLevel::Describe => object.fields.clone(),
+        DetailLevel::Describe => nested_fields_map(object),
         DetailLevel::Summary => {
             let mut projected = std::collections::BTreeMap::new();
             let name = object
@@ -118,6 +118,21 @@ fn project_fields(
             projected.insert("name".to_string(), name);
             projected
         }
+    }
+}
+
+fn nested_fields_map(
+    object: &DynamicObject
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    let mut root = serde_json::Value::Object(serde_json::Map::new());
+    for (path, value) in &object.fields {
+        let parts: Vec<&str> = path.split('.').collect();
+        insert_nested_value(&mut root, &parts, value.clone());
+    }
+
+    match root {
+        serde_json::Value::Object(map) => map.into_iter().collect(),
+        _ => std::collections::BTreeMap::new(),
     }
 }
 
@@ -276,8 +291,7 @@ mod tests {
         );
         let out = render_table(&[DynamicObject { fields }], DetailLevel::Describe, None);
 
-        assert!(out.contains("metadata.name"));
-        assert!(out.contains("metadata.namespace"));
+        assert!(out.contains("metadata"));
         assert!(out.contains("pod-a"));
         assert!(out.contains("items: 1"));
     }
@@ -293,7 +307,8 @@ mod tests {
             .expect("json output must serialize");
 
         assert!(out.starts_with("["));
-        assert!(out.contains("\"metadata.name\": \"pod-a\""));
+        assert!(out.contains("\"metadata\": {"));
+        assert!(out.contains("\"name\": \"pod-a\""));
     }
 
     #[test]
@@ -307,7 +322,8 @@ mod tests {
             .expect("yaml output must serialize");
 
         assert!(out.starts_with("-"));
-        assert!(out.contains("metadata.name: pod-a"));
+        assert!(out.contains("metadata:"));
+        assert!(out.contains("name: pod-a"));
     }
 
     #[test]
