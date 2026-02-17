@@ -402,4 +402,36 @@ mod tests {
         assert!(json.contains("\"name\": \"pod-a\""));
         assert!(json.contains("\"namespace\": \"demo-a\""));
     }
+
+    #[test]
+    fn select_missing_path_renders_null_in_json() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.name".to_string(),
+            Value::String("pod-a".to_string()),
+        );
+        let select = vec!["spec.nodeName".to_string()];
+        let json = render_json(&[DynamicObject { fields }], DetailLevel::Summary, Some(&select))
+            .expect("json output must serialize");
+
+        assert!(json.contains("\"spec.nodeName\": null"));
+    }
+
+    #[test]
+    fn select_missing_path_renders_dash_in_table() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.name".to_string(),
+            Value::String("pod-a".to_string()),
+        );
+        let select = vec!["spec.nodeName".to_string()];
+        let table = render_table(
+            &[DynamicObject { fields }],
+            DetailLevel::Summary,
+            Some(&select),
+        );
+
+        assert!(table.contains("| spec.nodeName |"));
+        assert!(table.lines().any(|line| line.contains("| -")));
+    }
 }

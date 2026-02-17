@@ -80,12 +80,22 @@ fn parse_cli_flags(
             let value = args
                 .get(index + 1)
                 .ok_or_else(|| CliError::InvalidArgs("missing value for --output".to_string()))?;
+            if value.starts_with('-') {
+                return Err(CliError::InvalidArgs(
+                    "missing value for --output".to_string(),
+                ));
+            }
             format = parse_format(value)?;
             index += 2;
             continue;
         }
 
         if let Some(value) = current.strip_prefix("--output=") {
+            if value.trim().is_empty() {
+                return Err(CliError::InvalidArgs(
+                    "missing value for --output".to_string(),
+                ));
+            }
             format = parse_format(value)?;
             index += 1;
             continue;
@@ -217,5 +227,12 @@ mod tests {
     fn detects_help_and_version_flags() {
         assert!(is_help_requested(&["-h".to_string()]));
         assert!(is_version_requested(&["--version".to_string()]));
+    }
+
+    #[test]
+    fn rejects_missing_output_value_before_next_flag() {
+        let args = vec!["--output".to_string(), "--describe".to_string()];
+        let err = parse_cli_flags(&args).expect_err("must fail for missing output value");
+        assert!(err.to_string().contains("missing value for --output"));
     }
 }

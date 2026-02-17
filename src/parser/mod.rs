@@ -33,7 +33,7 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
     if trimmed.is_empty() {
         return Err("WHERE clause is empty".to_string());
     }
-    if !trimmed.to_ascii_lowercase().starts_with("where") {
+    if !starts_with_where_keyword(trimmed) {
         return Err("query must start with WHERE".to_string());
     }
 
@@ -51,7 +51,23 @@ pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
         return Err("query must start with WHERE".to_string());
     }
 
-    parse_query(&args.join(" "))
+    let normalized_args: Vec<String> = args.iter().map(|arg| normalize_arg(arg)).collect();
+    parse_query(&normalized_args.join(" "))
+}
+
+fn starts_with_where_keyword(input: &str) -> bool {
+    input
+        .split_whitespace()
+        .next()
+        .is_some_and(|token| token.eq_ignore_ascii_case("where"))
+}
+
+fn normalize_arg(arg: &str) -> String {
+    if arg.chars().any(char::is_whitespace) {
+        format!("'{}'", arg)
+    } else {
+        arg.to_string()
+    }
 }
 
 fn query_ast(input: &str) -> IResult<&str, QueryAst> {
@@ -304,6 +320,28 @@ mod tests {
                 "metadata.name".to_string(),
                 "metadata.namespace".to_string()
             ])
+        );
+    }
+
+    #[test]
+    fn rejects_non_where_prefix_keyword() {
+        let err = parse_query("wherever metadata.name == pod-a")
+            .expect_err("must reject non-WHERE prefix");
+        assert_eq!(err, "query must start with WHERE");
+    }
+
+    #[test]
+    fn parse_query_args_preserves_values_with_spaces() {
+        let args = vec![
+            "where".to_string(),
+            "metadata.name".to_string(),
+            "==".to_string(),
+            "api pod".to_string(),
+        ];
+        let ast = parse_query_args(&args).expect("must parse spaced value from args");
+        assert_eq!(
+            ast.predicates[0].value,
+            Value::String("api pod".to_string())
         );
     }
 }
