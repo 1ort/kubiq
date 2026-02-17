@@ -17,9 +17,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            asset_name: kubiq-${{ replace(github.ref_name, '/', '-') }}-linux-x86_64.tar.gz
+            platform: linux-x86_64
           - os: windows-latest
-            asset_name: kubiq-${{ replace(github.ref_name, '/', '-') }}-windows-x86_64.zip
+            platform: windows-x86_64
 
     steps:
       - name: Checkout
@@ -34,19 +34,25 @@ jobs:
       - name: Package Linux binary
         if: runner.os == 'Linux'
         run: |
-          tar -czf "${{ matrix.asset_name }}" -C target/release kubiq
+          SAFE_TAG="${GITHUB_REF_NAME//\//-}"
+          ASSET_NAME="kubiq-${SAFE_TAG}-${{ matrix.platform }}.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/${ASSET_NAME}" -C target/release kubiq
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/release/kubiq.exe -DestinationPath "${{ matrix.asset_name }}"
+          $safeTag = "${{ github.ref_name }}" -replace "/", "-"
+          $assetName = "kubiq-$safeTag-${{ matrix.platform }}.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path target/release/kubiq.exe -DestinationPath "dist/$assetName"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}
+          name: ${{ matrix.platform }}-artifact
+          path: dist/*
           if-no-files-found: error
 
   create-release:
