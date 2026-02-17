@@ -24,10 +24,9 @@ pub fn list(resource: &str) -> Result<Vec<EngineObject>, String> {
 }
 
 async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
-    let mut config = Config::infer()
+    let config = Config::infer()
         .await
         .map_err(|error| format!("failed to infer kube config: {error}"))?;
-    config.proxy_url = None;
 
     let client = Client::try_from(config)
         .map_err(|error| format!("failed to build kube client: {error}"))?;
