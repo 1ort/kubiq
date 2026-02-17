@@ -43,11 +43,7 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
 
     loop {
         page_count += 1;
-        if page_count > MAX_LIST_PAGES {
-            return Err(format!(
-                "pagination for resource '{resource}' exceeded max pages ({MAX_LIST_PAGES})"
-            ));
-        }
+        ensure_page_limit(resource, page_count)?;
 
         let params = build_list_params(LIST_PAGE_SIZE, continue_token.as_deref());
         let mut page = api
@@ -56,20 +52,11 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, String> {
             .map_err(|error| format!("failed to list resource '{resource}': {error}"))?;
 
         all_items.append(&mut page.items);
-
-        let next_continue = page.metadata.continue_.filter(|token| !token.is_empty());
-        if next_continue.is_none() {
+        continue_token =
+            next_continue_token(resource, continue_token.as_deref(), page.metadata.continue_)?;
+        if continue_token.is_none() {
             break;
         }
-
-        if continue_token.as_ref() == next_continue.as_ref() {
-            return Err(format!(
-                "pagination for resource '{resource}' got stuck on continue token '{token}'",
-                token = next_continue.as_deref().unwrap_or_default()
-            ));
-        }
-
-        continue_token = next_continue;
     }
 
     Ok(all_items
@@ -87,6 +74,38 @@ fn build_list_params(
         params = params.continue_token(token);
     }
     params
+}
+
+fn ensure_page_limit(
+    resource: &str,
+    page_count: usize,
+) -> Result<(), String> {
+    if page_count > MAX_LIST_PAGES {
+        return Err(format!(
+            "pagination for resource '{resource}' exceeded max pages ({MAX_LIST_PAGES})"
+        ));
+    }
+    Ok(())
+}
+
+fn next_continue_token(
+    resource: &str,
+    current_token: Option<&str>,
+    raw_next_token: Option<String>,
+) -> Result<Option<String>, String> {
+    let next_token = raw_next_token.filter(|token| !token.is_empty());
+    if next_token.is_none() {
+        return Ok(None);
+    }
+
+    if current_token == next_token.as_deref() {
+        return Err(format!(
+            "pagination for resource '{resource}' got stuck on continue token '{token}'",
+            token = next_token.as_deref().unwrap_or_default()
+        ));
+    }
+
+    Ok(next_token)
 }
 
 async fn resolve_api_resource(
@@ -190,7 +209,9 @@ fn flatten_value(
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{MAX_LIST_PAGES, build_list_params, flatten_value};
+    use super::{
+        MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value, next_continue_token,
+    };
 
     #[test]
     fn flattens_nested_objects_to_dot_paths() {
@@ -230,7 +251,47 @@ mod tests {
     }
 
     #[test]
-    fn max_pages_guard_is_sane_for_large_clusters() {
-        assert!(MAX_LIST_PAGES >= 10_000);
+    fn page_limit_accepts_boundary_value() {
+        let result = ensure_page_limit("pods", MAX_LIST_PAGES);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn page_limit_rejects_overflow() {
+        let result = ensure_page_limit("pods", MAX_LIST_PAGES + 1);
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .unwrap_or_default()
+                .contains("exceeded max pages")
+        );
+    }
+
+    #[test]
+    fn next_continue_token_treats_absent_as_done() {
+        let result = next_continue_token("pods", None, None).expect("must succeed");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn next_continue_token_treats_empty_as_done() {
+        let result = next_continue_token("pods", Some("token-a"), Some(String::new()))
+            .expect("must succeed");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn next_continue_token_accepts_new_token() {
+        let result = next_continue_token("pods", Some("token-a"), Some("token-b".to_string()))
+            .expect("must succeed");
+        assert_eq!(result.as_deref(), Some("token-b"));
+    }
+
+    #[test]
+    fn next_continue_token_rejects_same_token() {
+        let result = next_continue_token("pods", Some("token-a"), Some("token-a".to_string()));
+        assert!(result.is_err());
+        assert!(result.err().unwrap_or_default().contains("got stuck"));
     }
 }
