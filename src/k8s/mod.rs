@@ -54,10 +54,7 @@ async fn async_list(resource: &str) -> Result<Vec<EngineObject>, K8sError> {
         let mut page = api
             .list(&params)
             .await
-            .map_err(|source| K8sError::ListFailed {
-                resource: resource.to_string(),
-                source: boxed_error(source),
-            })?;
+            .map_err(|source| map_list_error(resource, source))?;
 
         all_items.append(&mut page.items);
         continue_token =
@@ -82,6 +79,23 @@ fn build_list_params(
         params = params.continue_token(token);
     }
     params
+}
+
+fn map_list_error(
+    resource: &str,
+    source: kube::Error,
+) -> K8sError {
+    if is_api_unreachable_error_message(&source.to_string()) {
+        return K8sError::ApiUnreachable {
+            stage: "list",
+            source: boxed_error(source),
+        };
+    }
+
+    K8sError::ListFailed {
+        resource: resource.to_string(),
+        source: boxed_error(source),
+    }
 }
 
 fn ensure_page_limit(
@@ -124,9 +138,7 @@ async fn resolve_api_resource(
     let discovery = discovery::Discovery::new(client.clone())
         .run()
         .await
-        .map_err(|source| K8sError::DiscoveryRun {
-            source: boxed_error(source),
-        })?;
+        .map_err(map_discovery_error)?;
 
     for group in discovery.groups() {
         for (api_resource, capabilities) in group.recommended_resources() {
@@ -146,6 +158,23 @@ async fn resolve_api_resource(
     Err(K8sError::ResourceNotFound {
         resource: resource.to_string(),
     })
+}
+
+fn map_discovery_error(source: kube::Error) -> K8sError {
+    if is_api_unreachable_error_message(&source.to_string()) {
+        return K8sError::ApiUnreachable {
+            stage: "discovery",
+            source: boxed_error(source),
+        };
+    }
+
+    K8sError::DiscoveryRun {
+        source: boxed_error(source),
+    }
+}
+
+fn is_api_unreachable_error_message(message: &str) -> bool {
+    message.contains("client error (Connect)") || message.contains("Unable to connect")
 }
 
 fn dynamic_to_engine_object(object: DynamicObject) -> EngineObject {
@@ -223,7 +252,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value, next_continue_token,
+        MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value,
+        is_api_unreachable_error_message, next_continue_token,
     };
     use crate::error::K8sError;
 
@@ -316,5 +346,26 @@ mod tests {
     fn empty_resource_name_is_typed_error() {
         let result = super::list("  ");
         assert!(matches!(result, Err(K8sError::EmptyResourceName)));
+    }
+
+    #[test]
+    fn recognizes_connect_error_message() {
+        assert!(is_api_unreachable_error_message(
+            "ServiceError: client error (Connect)"
+        ));
+    }
+
+    #[test]
+    fn recognizes_unable_to_connect_message() {
+        assert!(is_api_unreachable_error_message(
+            "Unable to connect to the server"
+        ));
+    }
+
+    #[test]
+    fn does_not_mark_other_messages_as_connectivity() {
+        assert!(!is_api_unreachable_error_message(
+            "forbidden: user is not authorized"
+        ));
     }
 }

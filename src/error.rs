@@ -35,6 +35,12 @@ pub enum K8sError {
         #[source]
         source: BoxError,
     },
+    #[error("kubernetes api is unreachable during {stage}")]
+    ApiUnreachable {
+        stage: &'static str,
+        #[source]
+        source: BoxError,
+    },
     #[error("resource '{resource}' was not found via discovery")]
     ResourceNotFound { resource: String },
     #[error("failed to list resource '{resource}'")]
@@ -109,10 +115,7 @@ fn k8s_tip(error: &K8sError) -> &'static str {
         K8sError::ResourceNotFound { .. } => {
             "Tip: resource was not found. Check plural name via:\n  kubectl api-resources"
         }
-        K8sError::DiscoveryRun { source } | K8sError::ListFailed { source, .. }
-            if source.to_string().contains("client error (Connect)")
-                || source.to_string().contains("Unable to connect") =>
-        {
+        K8sError::ApiUnreachable { .. } => {
             "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info"
         }
         _ => "Tip: verify cluster access with `kubectl get ns` and then retry.",

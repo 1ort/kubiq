@@ -156,10 +156,9 @@ mod tests {
 
     #[test]
     fn k8s_error_contains_connectivity_tip() {
-        let err = CliError::K8s(K8sError::DiscoveryRun {
-            source: crate::error::boxed_error(std::io::Error::other(
-                "ServiceError: client error (Connect)",
-            )),
+        let err = CliError::K8s(K8sError::ApiUnreachable {
+            stage: "discovery",
+            source: crate::error::boxed_error(std::io::Error::other("dial tcp timeout")),
         });
         let rendered = err.to_string();
         assert!(rendered.contains("Kubernetes API is unreachable"));
