@@ -1,51 +1,157 @@
 # Mini-KQL
 
-Mini-KQL — CLI для выполнения SQL-подобных запросов к Kubernetes API.
+A lightweight CLI to run SQL-like queries against the Kubernetes API (core resources and CRDs).
 
-Работает с:
-- Pods
-- Deployments
-- Любым CRD
+## MVP Status
 
-## Вывод
+**MVP is ready** (`v0.1.0`).
 
-По умолчанию Mini-KQL отображает только имя ресурса (`name`).
+Implemented:
 
-- Полный вывод всех полей: `--describe` (или `-d`)
-- Формат вывода: `--output table|json|yaml` (или `-o`)
+- Dynamic resource discovery (core + CRD)
+- `list` queries
+- `where` filtering with `==`, `!=`, `AND`
+- `select` projection
+- Output formats: `table`, `json`, `yaml`
+- Default summary output (`name` only)
+- Full output via `--describe`
+- End-to-end tests on Minikube
 
-Примеры:
+## Features
+
+- Works with any plural Kubernetes resource name (`pods`, `deployments`, `widgets`, ...)
+- Typed predicate values (`bool`, `number`, `string`)
+- Nested reconstruction for `describe` and parent `select` paths (for example `select metadata`)
+- Helpful CLI diagnostics (`--help`, `--version`, actionable error tips)
+
+## Installation
+
+### Prerequisites
+
+- Rust stable
+- `kubectl`
+- Access to a Kubernetes cluster
+
+### Build
 
 ```bash
-mini-kql pods where metadata.namespace '==' demo-a
-mini-kql --describe pods where metadata.namespace '==' demo-a
-mini-kql -o json --describe pods where metadata.namespace '==' demo-a
-mini-kql -o yaml pods where metadata.namespace '==' demo-a
-mini-kql pods where metadata.namespace '==' demo-a select metadata.name,metadata.namespace
+cargo build --release
 ```
 
-## Быстрый тестовый кластер (minikube / "minicube")
+Run from source:
 
-Для локальной интеграционной проверки можно поднять кластер и заполнить его тестовыми сущностями:
+```bash
+cargo run -- <args>
+```
+
+## Usage
+
+```bash
+mini-kql [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]
+```
+
+Options:
+
+- `-o, --output <format>`: `table` (default), `json`, `yaml`
+- `-d, --describe`: print full nested object
+- `-h, --help`: show help
+- `-V, --version`: show version
+
+## Query Language
+
+### Where
+
+- Operators: `==`, `!=`
+- Logical conjunction: `AND`
+
+Semantics:
+
+- Missing field -> `false`
+- Type mismatch -> `false`
+- `null` in comparison -> `false`
+
+### Select
+
+- Limits output to selected fields
+- Supports comma or whitespace-separated paths
+- Parent path selection reconstructs nested output (`select metadata`)
+
+## Examples
+
+```bash
+# Basic filter
+mini-kql pods where metadata.namespace == demo-a
+
+# Filter + projection
+mini-kql pods where metadata.namespace == demo-a select metadata.name,metadata.namespace
+
+# Parent projection (nested object in json/yaml)
+mini-kql -o json pods where metadata.name == worker-a select metadata
+
+# Full nested output
+mini-kql -o yaml -d pods where metadata.name == worker-a
+
+# CRD example
+mini-kql -o json widgets where spec.enabled == true select metadata.name,spec.owner
+```
+
+## Local E2E Test Cluster (Minikube)
+
+Start a clean local cluster with fixtures:
 
 ```bash
 ./scripts/minikube-up.sh
 ```
 
-В кластере будут созданы:
-- Namespaces: `demo-a`, `demo-b`
-- Core ресурсы: `Pod`, `Deployment`, `Service`, `ConfigMap`, `Secret`, `Job`
-- CRD: `widgets.demo.kql.io`
-- CR: `Widget` в двух namespace
-
-Перезаполнить тестовые данные:
+Re-apply fixtures:
 
 ```bash
 ./scripts/minikube-reset-data.sh
 ```
 
-Удалить кластер:
+Delete the cluster:
 
 ```bash
 ./scripts/minikube-down.sh
 ```
+
+Run end-to-end tests:
+
+```bash
+MINI_KQL_E2E=1 cargo test --test e2e_minikube -- --nocapture
+```
+
+## Development Checks
+
+```bash
+cargo test -q
+cargo run -- --help
+```
+
+## Architecture (High Level)
+
+`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/list -> Evaluator -> Projection -> Output`
+
+## Project Layout
+
+```text
+src/
+  cli/
+  parser/
+  engine/
+  k8s/
+  output/
+  dynamic_object.rs
+tests/
+  e2e_minikube.rs
+```
+
+## Documentation
+
+See `docs/` for full details:
+
+- `docs/product/cli_spec.md`
+- `docs/query_language/grammar.md`
+- `docs/query_language/semantics.md`
+- `docs/development/testing.md`
+- `docs/plans/mvp_plan.md`
