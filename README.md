@@ -12,6 +12,7 @@ Implemented:
 - `list` queries
 - Automatic pagination/batching for large `list` responses
 - `where` filtering with `==`, `!=`, `AND`
+- Safe server-side filter pushdown for subset of `where ==` (`metadata.name`, `metadata.namespace`, `metadata.labels.*`)
 - `select` projection
 - Output formats: `table`, `json`, `yaml`
 - Default summary output (`name` only)

@@ -34,6 +34,7 @@ Output (summary/describe/select, table/json/yaml)
 ### K8s layer
 - Discovery ресурсов (core + CRD)
 - Dynamic paged list fetch (`limit/continue`)
+- Safe selector pushdown (`fieldSelector`/`labelSelector`) для подмножества `where ==`
 - Преобразование в внутренний `DynamicObject`
 
 ### Output

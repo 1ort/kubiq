@@ -56,3 +56,4 @@ Release tag: `v0.1.0`
 
 - Реализована pagination/batching для `list` в K8s layer (`limit/continue`).
 - Реализована единая typed-иерархия ошибок (`CliError`/`K8sError`/`OutputError`) с source chain.
+- Реализован safe server-side filtering pushdown (подмножество `where ==` в `fieldSelector`/`labelSelector`).

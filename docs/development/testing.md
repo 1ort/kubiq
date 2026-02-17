@@ -6,6 +6,7 @@
 - path
 - evaluator
 - k8s pagination helpers (`limit/continue`, guards)
+- server-side filtering pushdown helpers/selectors
 - error rendering/classification (`CliError` tips, `K8sError`, `OutputError`)
 
 ## Integration tests (minikube)

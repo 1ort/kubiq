@@ -12,6 +12,7 @@
 - Форматы вывода: `table`, `json`, `yaml`
 - Режимы детализации: summary (по умолчанию), `--describe`
 - Typed errors с actionable tips в CLI
+- Частичный server-side filtering (safe pushdown `where ==` для `metadata.name`, `metadata.namespace`, `metadata.labels.*`)
 
 Не поддерживается:
 
@@ -19,4 +20,4 @@
 - watch
 - join
 - sort
-- server-side filtering (пока всё фильтруется client-side)
+- Полный server-side filtering для всех поддерживаемых выражений `where`
