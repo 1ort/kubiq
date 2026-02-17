@@ -3,10 +3,9 @@
 ## Требования
 
 - Rust stable
-- Доступ к Kubernetes cluster
 - `kubectl`
 - `minikube`
-- Docker (если используете драйвер `docker`)
+- Docker (если используется драйвер `docker`)
 
 ## Сборка
 
@@ -16,13 +15,12 @@ cargo build
 
 ## Локальный тестовый кластер (minikube)
 
-Поднять локальный кластер и загрузить тестовые сущности:
-
 ```bash
 ./scripts/minikube-up.sh
 ```
 
 Скрипт поддерживает параметры окружения:
+
 - `MINIKUBE_PROFILE` (default: `kql-dev`)
 - `MINIKUBE_DRIVER` (default: `docker`)
 - `MINIKUBE_K8S_VERSION` (default: `stable`)
@@ -31,4 +29,11 @@ cargo build
 
 ```bash
 MINIKUBE_PROFILE=kql-ci MINIKUBE_DRIVER=docker ./scripts/minikube-up.sh
+```
+
+## Полезные проверки
+
+```bash
+cargo test -q
+MINI_KQL_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```

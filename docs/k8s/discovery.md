@@ -2,10 +2,9 @@
 
 Алгоритм:
 
-1. Запросить API discovery
-2. Найти ресурс по plural имени
-3. Получить:
-   - group
-   - version
-   - kind
-   - namespaced
+1. Создать `kube::Client` из `Config::infer()`
+2. Запустить `discovery::Discovery::run()`
+3. Найти ресурс по plural имени (`pods`, `widgets`, ...)
+4. Построить `ApiResource` через GVK + plural
+
+Результат discovery используется для list-запроса к любому ресурсу (core и CRD).

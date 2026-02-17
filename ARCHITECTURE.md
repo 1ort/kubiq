@@ -4,43 +4,47 @@
 
 CLI
  ↓
-Parser
+Parser (`nom`)
  ↓
 AST
  ↓
 QueryPlan
  ↓
-K8s fetch
+K8s fetch (discovery + list)
  ↓
-Evaluator
+Evaluator (`where`)
  ↓
-Output
+Output (summary/describe/select, table/json/yaml)
 
 ## Main modules
 
 ### CLI
-- Парсинг аргументов
-- Инициализация клиента
+- Парсинг argv
+- Флаги output/detail
+- Запуск пайплайна
 
 ### Parser
-- DSL грамматика
-- AST
+- DSL grammar (`where`, `and`, `select`)
+- Typed AST (`serde_json::Value`)
 
 ### Engine
-- Path resolution
-- Expr evaluation
+- Build QueryPlan
+- Evaluate predicates (`==`, `!=`, `AND`)
 
 ### K8s layer
-- Discovery
-- Resource resolution
-- Fetch
+- Discovery ресурсов (core + CRD)
+- Dynamic list fetch
+- Преобразование в внутренний `DynamicObject`
 
 ### Output
-- Table
-- JSON
+- Summary по умолчанию (`name`)
+- `--describe` (nested)
+- `select`-проекция
+- `table|json|yaml`
 
 ## MVP constraints
 
 - Только list
-- Только where
+- where + select
 - ==, !=, AND
+- Без aggregation/watch/sort/join

@@ -1,15 +1,19 @@
 # AST
 
-struct Query {
-    resource: String,
-    filter: Option<Expr>,
-    select: Option<Vec<Path>>,
+```rust
+struct QueryAst {
+    predicates: Vec<Predicate>,
+    select_paths: Option<Vec<String>>,
 }
 
-enum Expr {
-    Eq(Path, Value),
-    Ne(Path, Value),
-    And(Box<Expr>, Box<Expr>),
+struct Predicate {
+    path: String,
+    op: Operator,
+    value: serde_json::Value,
 }
 
-struct Path(Vec<String>);
+enum Operator {
+    Eq,
+    Ne,
+}
+```

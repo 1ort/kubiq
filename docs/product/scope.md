@@ -2,11 +2,14 @@
 
 Поддерживается:
 
-- Любые ресурсы (core + CRD)
-- list-запросы
-- where-фильтрация
-- ==, !=
-- AND
+- Любые ресурсы Kubernetes: core + CRD (через discovery)
+- Только list-запросы
+- Фильтрация `where`
+- Операторы: `==`, `!=`
+- Логика: `AND`
+- Проекция полей через `select`
+- Форматы вывода: `table`, `json`, `yaml`
+- Режимы детализации: summary (по умолчанию), `--describe`
 
 Не поддерживается:
 
@@ -14,4 +17,4 @@
 - watch
 - join
 - sort
-- select
+- server-side filtering (пока всё фильтруется client-side)

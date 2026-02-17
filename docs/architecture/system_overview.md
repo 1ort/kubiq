@@ -10,4 +10,10 @@ K8s fetch
  ↓
 Evaluator
  ↓
-Output
+Projection + Output
+
+Где:
+
+- Evaluator применяет `where`
+- Projection применяет `select`/summary/describe
+- Output рендерит `table|json|yaml`
