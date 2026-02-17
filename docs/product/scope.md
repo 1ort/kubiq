@@ -11,6 +11,7 @@
 - Проекция полей через `select`
 - Форматы вывода: `table`, `json`, `yaml`
 - Режимы детализации: summary (по умолчанию), `--describe`
+- Typed errors с actionable tips в CLI
 
 Не поддерживается:
 

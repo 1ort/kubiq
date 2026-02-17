@@ -26,6 +26,11 @@ kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [sel
 - `--describe` выводит полный nested-объект
 - `select` переопределяет summary/describe и выводит только выбранные пути
 
+## Ошибки и диагностика
+
+- CLI возвращает typed ошибки (`CliError`) с категориями `InvalidArgs`, `Parse`, `K8s`, `Output`
+- Для частых сценариев (`resource not found`, `API unreachable`) CLI печатает actionable tips
+
 ## Примеры
 
 ```bash

@@ -13,13 +13,17 @@
   - `ConfigInfer`
   - `ClientBuild`
   - `DiscoveryRun`
+  - `ApiUnreachable`
   - `ResourceNotFound`
   - `ListFailed`
   - `PaginationExceeded`
   - `PaginationStuck`
 - Output layer использует typed `OutputError` (`JsonSerialize`, `YamlSerialize`)
+- Реализация typed errors построена на `thiserror`
+- Внутренние причины ошибок сохраняются через `source` (error chain)
 
 Требование к сообщениям:
 
 - Чётко указывать, в каком этапе произошла ошибка
 - Не терять контекст внешней ошибки (`k8s error: ...`, `parse error: ...`)
+- Давать actionable tips для частых операторских проблем (resource not found, API unreachable)

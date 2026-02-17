@@ -55,3 +55,4 @@ Release tag: `v0.1.0`
 ## Post-MVP updates
 
 - Реализована pagination/batching для `list` в K8s layer (`limit/continue`).
+- Реализована единая typed-иерархия ошибок (`CliError`/`K8sError`/`OutputError`) с source chain.

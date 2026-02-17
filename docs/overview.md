@@ -10,7 +10,8 @@
 6. `query_language/semantics.md`
 7. `execution/query_plan.md`
 8. `development/testing.md`
-9. `plans/mvp_plan.md`
+9. `development/error_handling.md`
+10. `plans/mvp_plan.md`
 
 ## Статус
 

@@ -4,6 +4,7 @@
 src/
   main.rs
   lib.rs
+  error.rs
   cli/
   parser/
   engine/
