@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "*"
+      - "release/*"
 
 permissions:
   contents: write
@@ -17,9 +17,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            asset_name: kubiq-${{ github.ref_name }}-linux-x86_64.tar.gz
+            asset_name: kubiq-${{ replace(github.ref_name, '/', '-') }}-linux-x86_64.tar.gz
           - os: windows-latest
-            asset_name: kubiq-${{ github.ref_name }}-windows-x86_64.zip
+            asset_name: kubiq-${{ replace(github.ref_name, '/', '-') }}-windows-x86_64.zip
 
     steps:
       - name: Checkout
