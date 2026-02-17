@@ -16,6 +16,9 @@ mini-kql [--output table|json|yaml] [--describe] <resource> where <predicates> [
 
 - `--output`, `-o`: `table` (default), `json`, `yaml`
 - `--describe`, `-d`: полный вывод объекта
+- `--help`, `-h`: показать справку
+- `--version`, `-V`: показать версию
+- `--`: завершить разбор флагов и трактовать остаток как positional аргументы
 
 ## Правила вывода
 
