@@ -44,6 +44,16 @@ CLI → parse → AST → query plan → fetch → evaluate → output
 - k8s/ — работа с API
 - output/ — форматирование результата
 
+## Run kubiq correctly (for agents)
+- Перед запуском `kubiq` обязательно очищать proxy env vars, иначе возможны ложные ошибки `kubernetes api is unreachable`.
+- Рекомендуемый шаблон запуска из репозитория:
+  - `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy cargo run -- <query args>`
+- Если бинарь уже собран, можно быстрее:
+  - `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy target/debug/kubiq <query args>`
+- Для быстрой проверки доступа к кластеру использовать:
+  - `kubectl config current-context`
+  - `kubectl get ns`
+
 ## Commit policy
 - Коммитить изменения сразу после выполнения задачи, без отдельного запроса пользователя.
 - Каждую отдельную фичу разрабатывать в отдельной git-ветке.
