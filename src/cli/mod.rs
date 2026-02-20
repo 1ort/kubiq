@@ -12,7 +12,7 @@ enum OutputArg {
 
 #[derive(Parser, Debug)]
 #[command(name = "kubiq")]
-#[command(about = "Query Kubernetes resources with where/select")]
+#[command(about = "Query Kubernetes resources with where/order by/select")]
 #[command(version)]
 struct CliArgs {
     #[arg(
@@ -44,6 +44,7 @@ pub fn run() -> Result<(), CliError> {
     let query_options = build_list_query_options(&plan);
     let objects = k8s::list(&args.resource, &query_options).map_err(CliError::K8s)?;
     let filtered = engine::evaluate(&plan, &objects);
+    let sorted = engine::sort_objects(&plan, &filtered);
 
     let detail = if args.describe {
         output::DetailLevel::Describe
@@ -52,7 +53,7 @@ pub fn run() -> Result<(), CliError> {
     };
 
     output::print(
-        &filtered,
+        &sorted,
         map_output_format(args.output),
         detail,
         plan.select_paths.as_deref(),
@@ -225,6 +226,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_query_tokens_with_order_by_from_args_form() {
+        let tokens = vec![
+            "where".to_string(),
+            "metadata.namespace".to_string(),
+            "==".to_string(),
+            "demo-a".to_string(),
+            "order".to_string(),
+            "by".to_string(),
+            "metadata.name".to_string(),
+            "desc".to_string(),
+        ];
+
+        let ast = parse_query_tokens(&tokens).expect("must parse query tokens");
+        let order_keys = ast.order_by.expect("must parse order by");
+        assert_eq!(order_keys.len(), 1);
+        assert_eq!(order_keys[0].path, "metadata.name");
+        assert!(matches!(
+            order_keys[0].direction,
+            crate::parser::SortDirection::Desc
+        ));
+    }
+
+    #[test]
     fn k8s_error_contains_connectivity_tip() {
         let err = CliError::K8s(K8sError::ApiUnreachable {
             stage: "discovery",
@@ -299,6 +323,7 @@ mod tests {
                 },
             ],
             select_paths: None,
+            sort_keys: None,
         };
 
         let options = build_list_query_options(&plan);
@@ -318,6 +343,7 @@ mod tests {
                 value: Value::String("api".to_string()),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         let options = build_list_query_options(&plan);
@@ -341,6 +367,7 @@ mod tests {
                 },
             ],
             select_paths: None,
+            sort_keys: None,
         };
 
         let options = build_list_query_options(&plan);
@@ -357,6 +384,7 @@ mod tests {
                 value: Value::Bool(true),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         let options = build_list_query_options(&plan);
