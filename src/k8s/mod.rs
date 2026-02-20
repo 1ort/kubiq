@@ -1,3 +1,5 @@
+pub mod planner;
+
 use std::collections::BTreeMap;
 
 use kube::{
@@ -30,10 +32,29 @@ impl ListQueryOptions {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ListResult {
+    pub objects: Vec<EngineObject>,
+    pub diagnostics: Vec<K8sDiagnostic>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum K8sDiagnostic {
+    SelectorFallback {
+        reason: SelectorFallbackReason,
+        attempted: ListQueryOptions,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectorFallbackReason {
+    ApiRejectedBadRequest,
+}
+
 pub fn list(
     resource: &str,
     options: &ListQueryOptions,
-) -> Result<Vec<EngineObject>, K8sError> {
+) -> Result<ListResult, K8sError> {
     let resource = resource.trim();
     if resource.is_empty() {
         return Err(K8sError::EmptyResourceName);
@@ -46,7 +67,7 @@ pub fn list(
 async fn async_list(
     resource: &str,
     options: &ListQueryOptions,
-) -> Result<Vec<EngineObject>, K8sError> {
+) -> Result<ListResult, K8sError> {
     let config = Config::infer()
         .await
         .map_err(|source| K8sError::ConfigInfer {
@@ -60,15 +81,23 @@ async fn async_list(
     let api_resource = resolve_api_resource(&client, resource).await?;
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
 
+    let mut diagnostics = Vec::new();
     let items = match list_pages(resource, &api, options).await {
         Ok(items) => items,
         Err(error) if options.has_selectors() && should_retry_without_selectors(&error) => {
+            diagnostics.push(K8sDiagnostic::SelectorFallback {
+                reason: SelectorFallbackReason::ApiRejectedBadRequest,
+                attempted: options.clone(),
+            });
             list_pages(resource, &api, &ListQueryOptions::default()).await?
         }
         Err(error) => return Err(error),
     };
 
-    Ok(items.into_iter().map(dynamic_to_engine_object).collect())
+    Ok(ListResult {
+        objects: items.into_iter().map(dynamic_to_engine_object).collect(),
+        diagnostics,
+    })
 }
 
 async fn list_pages(
@@ -119,34 +148,43 @@ fn build_list_params(
     params
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListErrorClass {
+    SelectorRejected,
+    ApiUnreachable,
+    Other,
+}
+
+fn classify_list_error(source: &kube::Error) -> ListErrorClass {
+    match source {
+        kube::Error::Api(error) if error.code == 400 => ListErrorClass::SelectorRejected,
+        kube::Error::Service(_) | kube::Error::HyperError(_) => ListErrorClass::ApiUnreachable,
+        _ => ListErrorClass::Other,
+    }
+}
+
 fn map_list_error(
     resource: &str,
     source: kube::Error,
 ) -> K8sError {
-    if is_api_unreachable_error_message(&source.to_string()) {
-        return K8sError::ApiUnreachable {
+    match classify_list_error(&source) {
+        ListErrorClass::SelectorRejected => K8sError::SelectorRejected {
+            resource: resource.to_string(),
+            source: boxed_error(source),
+        },
+        ListErrorClass::ApiUnreachable => K8sError::ApiUnreachable {
             stage: "list",
             source: boxed_error(source),
-        };
-    }
-
-    K8sError::ListFailed {
-        resource: resource.to_string(),
-        source: boxed_error(source),
+        },
+        ListErrorClass::Other => K8sError::ListFailed {
+            resource: resource.to_string(),
+            source: boxed_error(source),
+        },
     }
 }
 
 fn should_retry_without_selectors(error: &K8sError) -> bool {
-    match error {
-        K8sError::ListFailed { source, .. } => {
-            let message = source.to_string();
-            message.contains("BadRequest")
-                || message.contains("field label not supported")
-                || message.contains("not a known field selector")
-                || message.contains("field selector")
-        }
-        _ => false,
-    }
+    matches!(error, K8sError::SelectorRejected { .. })
 }
 
 fn ensure_page_limit(
@@ -212,20 +250,15 @@ async fn resolve_api_resource(
 }
 
 fn map_discovery_error(source: kube::Error) -> K8sError {
-    if is_api_unreachable_error_message(&source.to_string()) {
-        return K8sError::ApiUnreachable {
+    match classify_list_error(&source) {
+        ListErrorClass::ApiUnreachable => K8sError::ApiUnreachable {
             stage: "discovery",
             source: boxed_error(source),
-        };
+        },
+        _ => K8sError::DiscoveryRun {
+            source: boxed_error(source),
+        },
     }
-
-    K8sError::DiscoveryRun {
-        source: boxed_error(source),
-    }
-}
-
-fn is_api_unreachable_error_message(message: &str) -> bool {
-    message.contains("client error (Connect)") || message.contains("Unable to connect")
 }
 
 fn dynamic_to_engine_object(object: DynamicObject) -> EngineObject {
@@ -303,8 +336,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        ListQueryOptions, MAX_LIST_PAGES, build_list_params, ensure_page_limit, flatten_value,
-        is_api_unreachable_error_message, next_continue_token, should_retry_without_selectors,
+        K8sDiagnostic, ListErrorClass, ListQueryOptions, MAX_LIST_PAGES, SelectorFallbackReason,
+        build_list_params, classify_list_error, ensure_page_limit, flatten_value,
+        next_continue_token, should_retry_without_selectors,
     };
     use crate::error::K8sError;
 
@@ -417,34 +451,64 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_connect_error_message() {
-        assert!(is_api_unreachable_error_message(
-            "ServiceError: client error (Connect)"
-        ));
+    fn classifies_api_bad_request_as_selector_rejected() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "field selector not supported".to_string(),
+            reason: "BadRequest".to_string(),
+            code: 400,
+        });
+        assert_eq!(
+            classify_list_error(&error),
+            ListErrorClass::SelectorRejected
+        );
     }
 
     #[test]
-    fn recognizes_unable_to_connect_message() {
-        assert!(is_api_unreachable_error_message(
-            "Unable to connect to the server"
-        ));
+    fn classifies_service_error_as_api_unreachable() {
+        let error = kube::Error::Service(std::io::Error::other("connect").into());
+        assert_eq!(classify_list_error(&error), ListErrorClass::ApiUnreachable);
     }
 
     #[test]
-    fn does_not_mark_other_messages_as_connectivity() {
-        assert!(!is_api_unreachable_error_message(
-            "forbidden: user is not authorized"
-        ));
+    fn classifies_other_api_errors_as_other() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "forbidden".to_string(),
+            reason: "Forbidden".to_string(),
+            code: 403,
+        });
+        assert_eq!(classify_list_error(&error), ListErrorClass::Other);
     }
 
     #[test]
-    fn retries_without_selectors_on_bad_request_errors() {
-        let error = K8sError::ListFailed {
+    fn retries_without_selectors_on_selector_rejected_errors() {
+        let error = K8sError::SelectorRejected {
             resource: "pods".to_string(),
-            source: crate::error::boxed_error(std::io::Error::other(
-                "BadRequest: field label not supported",
-            )),
+            source: crate::error::boxed_error(std::io::Error::other("bad request")),
         };
         assert!(should_retry_without_selectors(&error));
+    }
+
+    #[test]
+    fn selector_fallback_diagnostic_keeps_attempted_selectors() {
+        let diagnostic = K8sDiagnostic::SelectorFallback {
+            reason: SelectorFallbackReason::ApiRejectedBadRequest,
+            attempted: ListQueryOptions {
+                field_selector: Some("metadata.namespace=demo-a".to_string()),
+                label_selector: None,
+            },
+        };
+
+        assert!(matches!(
+            diagnostic,
+            K8sDiagnostic::SelectorFallback {
+                reason: SelectorFallbackReason::ApiRejectedBadRequest,
+                attempted: ListQueryOptions {
+                    field_selector: Some(_),
+                    label_selector: None,
+                }
+            }
+        ));
     }
 }

@@ -32,6 +32,9 @@ kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [ord
 
 - CLI возвращает typed ошибки (`CliError`) с категориями `InvalidArgs`, `Parse`, `K8s`, `Output`
 - Для частых сценариев (`resource not found`, `API unreachable`) CLI печатает actionable tips
+- Для server-side filtering CLI печатает предупреждения в `stderr`, если:
+  - часть предикатов не может быть pushdown'нута
+  - API отверг selectors и выполнен fallback на client-side filtering
 
 ## Примеры
 

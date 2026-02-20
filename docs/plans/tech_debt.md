@@ -2,10 +2,8 @@
 
 ## Top product gaps
 
-1. Sorting (`order by`) отсутствует
-2. Watch-режим отсутствует
-3. Aggregation отсутствует
-4. Полный server-side filtering отсутствует (сейчас только safe subset)
+1. Watch-режим отсутствует
+2. Aggregation отсутствует
 
 ## Refactoring and quality backlog
 
@@ -17,12 +15,6 @@
 - Что сделать: ввести engine-owned типы (`EnginePredicate`, `EngineOperator`), конвертировать AST -> QueryPlan на boundary.
 - Критерий готовности: `engine` не импортирует `crate::parser`; тесты `engine` используют только engine-типы.
 
-2. Убрать строковые эвристики классификации ошибок K8s
-- Где: `src/k8s/mod.rs` (`is_api_unreachable_error_message`, `should_retry_without_selectors`)
-- Проблема: проверка по `contains(...)` хрупкая и чувствительна к формату текста клиента/апи-сервера.
-- Что сделать: перейти на typed-ветвление по `kube::Error`/HTTP status (`BadRequest`, transport/connectivity), вынести в отдельный mapper.
-- Критерий готовности: нет бизнес-решений через `error.to_string().contains(...)`; есть unit-тесты на typed mapper.
-
 3. Исправить обработку значений с `'` в аргументах CLI
 - Где: `src/parser/mod.rs` (`normalize_arg`, `quoted_string_value`)
 - Проблема: аргументы с апострофом ломают синтаксис, escape-последовательности не поддерживаются.
@@ -30,12 +22,6 @@
 - Критерий готовности: запросы вида `where metadata.name == O'Reilly` корректно парсятся в string literal.
 
 ### P1 (средний приоритет)
-
-1. Уменьшить связность CLI и K8s pushdown логики
-- Где: `src/cli/mod.rs` (`build_list_query_options` и selector validators)
-- Проблема: логика маппинга `where -> selectors` живет в CLI, хотя относится к K8s fetch strategy.
-- Что сделать: вынести pushdown planner в `k8s` (или отдельный модуль planner), в CLI оставить только orchestration.
-- Критерий готовности: CLI не знает детали `fieldSelector`/`labelSelector` сборки.
 
 2. Убрать создание отдельного Tokio runtime на каждый `list`
 - Где: `src/k8s/mod.rs` (`Runtime::new`, `block_on`)
@@ -73,4 +59,6 @@
 
 - Pagination/batching для больших `list` (через paged requests с `limit/continue`)
 - Единая typed-иерархия ошибок (`CliError`/`K8sError`/`OutputError`) с source chain (`thiserror`)
-- Server-side filtering (safe pushdown подмножества `where ==` в `fieldSelector`/`labelSelector`)
+- Server-side filtering planner + pushdown подмножества `where` (`==`/`!=` для metadata/labels) с typed fallback diagnostics
+- Typed mapper ошибок K8s list/discovery без string-эвристик
+- Pushdown planner вынесен из CLI в `k8s::planner`

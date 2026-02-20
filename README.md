@@ -13,7 +13,7 @@ Implemented:
 - Automatic pagination/batching for large `list` responses
 - `where` filtering with `==`, `!=`, `AND`
 - `order by` sorting with multi-key support and `asc|desc`
-- Safe server-side filter pushdown for subset of `where ==` (`metadata.name`, `metadata.namespace`, `metadata.labels.*`)
+- Safe server-side filter pushdown for subset of `where` (`==`/`!=` on `metadata.name`, `metadata.namespace`, `metadata.labels.*`)
 - `select` projection
 - Output formats: `table`, `json`, `yaml`
 - Default summary output (`name` only)
@@ -27,6 +27,7 @@ Implemented:
 - Typed predicate values (`bool`, `number`, `string`)
 - Nested reconstruction for `describe` and parent `select` paths (for example `select metadata`)
 - Helpful CLI diagnostics (`--help`, `--version`, actionable error tips)
+- Pushdown transparency via stderr warnings for non-pushable predicates and selector fallback
 
 ## Installation
 
