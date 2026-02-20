@@ -31,6 +31,12 @@
 - Что сделать: вынести path utilities в отдельный модуль и использовать в fetch/output.
 - Критерий готовности: единый набор тестов покрывает flatten + reconstruction roundtrip.
 
+5. Корректно обрабатывать map-ключи с `.` при describe/select parent path
+- Где: `src/k8s/mod.rs` (`flatten_value`), `src/output/mod.rs` (`insert_nested_value`, `select_value`)
+- Проблема: ключи вида `kubectl.kubernetes.io/...` интерпретируются как path-сегменты и искажаются при reconstruction.
+- Что сделать: добавить экранирование path-сегментов (или альтернативное кодирование), чтобы flatten/unflatten сохранял исходные ключи map без расщепления по `.`.
+- Критерий готовности: roundtrip сохраняет ключи с `.` без изменения структуры; есть unit/e2e тест на annotations/labels с dotted keys.
+
 ### P2 (низкий приоритет, но полезно закрыть)
 
 1. Улучшить устойчивость e2e-запуска

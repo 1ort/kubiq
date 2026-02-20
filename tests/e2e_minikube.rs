@@ -299,3 +299,174 @@ fn e2e_select_for_crd_widget() {
         Some(&JsonValue::String("team-a".to_string()))
     );
 }
+
+#[test]
+fn e2e_json_aggregation_count_for_core_resource() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "select",
+        "count(*)",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let first = rows
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("must return one aggregation row");
+
+    let count = first
+        .get("count(*)")
+        .and_then(JsonValue::as_u64)
+        .expect("count(*) must be uint");
+    assert!(count >= 1, "expected at least one pod in demo-a namespace");
+    assert!(
+        first.get("name").is_none(),
+        "aggregation row must not be rewritten into summary `name` field"
+    );
+}
+
+#[test]
+fn e2e_aggregation_sum_non_numeric_returns_error() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "select",
+        "sum(metadata.name)",
+    ]);
+
+    assert!(!output.status.success(), "sum(metadata.name) must fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr must be utf8");
+    assert!(stderr.contains("engine error:"));
+    assert!(stderr.contains("expects number"));
+}
+
+#[test]
+fn e2e_table_aggregation_shows_aggregate_column() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "select",
+        "count(*)",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout must be valid UTF-8");
+    assert!(stdout.contains("| count(*) |"));
+    assert!(!stdout.contains("| name |"));
+}
+
+#[test]
+fn e2e_json_aggregation_count_path_for_core_resource() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "select",
+        "count(metadata.name)",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let first = rows
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("must return one aggregation row");
+    let count = first
+        .get("count(metadata.name)")
+        .and_then(JsonValue::as_u64)
+        .expect("count(metadata.name) must be uint");
+    assert!(count >= 1, "expected at least one named pod in demo-a namespace");
+}
+
+#[test]
+fn e2e_json_aggregation_min_max_generation_for_core_resource() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "select",
+        "min(metadata.generation),max(metadata.generation)",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let first = rows
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("must return one aggregation row");
+    let min = first
+        .get("min(metadata.generation)")
+        .and_then(JsonValue::as_i64)
+        .expect("min(metadata.generation) must be int");
+    let max = first
+        .get("max(metadata.generation)")
+        .and_then(JsonValue::as_i64)
+        .expect("max(metadata.generation) must be int");
+    assert!(min <= max, "min must be <= max");
+}

@@ -75,10 +75,31 @@ pub enum OutputError {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum EngineError {
+    #[error("aggregation `{function}` expects {expected} at path `{path}`, got {actual}")]
+    InvalidAggregation {
+        function: String,
+        path: String,
+        expected: &'static str,
+        actual: String,
+    },
+    #[error(
+        "aggregation `{function}` cannot compare mixed types at path `{path}`: {left} vs {right}"
+    )]
+    IncompatibleAggregationTypes {
+        function: String,
+        path: String,
+        left: String,
+        right: String,
+    },
+}
+
 #[derive(Debug)]
 pub enum CliError {
     InvalidArgs(String),
     Parse(String),
+    Engine(EngineError),
     K8s(K8sError),
     Output(OutputError),
 }
@@ -95,8 +116,9 @@ impl std::fmt::Display for CliError {
             ),
             Self::Parse(error) => write!(
                 f,
-                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [order by <path> [asc|desc]] [select <paths>]`.\nExample: `kubiq pods where metadata.namespace == demo-a order by metadata.name desc select metadata.name`"
+                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [order by <path> [asc|desc]] [select <paths>|<aggregations>]`.\nExample: `kubiq pods where metadata.namespace == demo-a order by metadata.name desc select metadata.name`\nAggregation example: `kubiq pods where metadata.namespace == demo-a select count(*)`"
             ),
+            Self::Engine(error) => write!(f, "engine error: {error}"),
             Self::K8s(error) => write!(f, "k8s error: {error}\n\n{}", k8s_tip(error)),
             Self::Output(error) => write!(
                 f,
@@ -109,6 +131,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
+            Self::Engine(error) => Some(error),
             Self::K8s(error) => Some(error),
             Self::Output(error) => Some(error),
             _ => None,

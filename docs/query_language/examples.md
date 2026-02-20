@@ -9,3 +9,5 @@
 - `pods where metadata.namespace == demo-a select metadata.name, metadata.namespace order by metadata.name desc`
 - `pods where metadata.name == worker-a select metadata`
 - `widgets where spec.enabled == true order by spec.owner, metadata.name select metadata.name, spec.owner`
+- `pods where metadata.namespace == demo-a select count(*)`
+- `pods where metadata.namespace == demo-a select sum(metadata.generation), avg(metadata.generation)`
