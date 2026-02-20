@@ -53,13 +53,10 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
 
     match all_consuming(delimited(multispace0, query_ast, multispace0)).parse(trimmed) {
         Ok((_, ast)) => Ok(ast),
-        Err(_) => {
-            if contains_invalid_escape_in_quoted_string(trimmed) {
-                Err("invalid escape sequence in quoted string".to_string())
-            } else {
-                Err("invalid query syntax".to_string())
-            }
+        Err(err) if is_invalid_escape_error(&err) => {
+            Err("invalid escape sequence in quoted string".to_string())
         }
+        Err(_) => Err("invalid query syntax".to_string()),
     }
 }
 
@@ -320,12 +317,11 @@ fn quoted_string_value(input: &str) -> IResult<&str, Value> {
         }
     }
 
-    let error_kind = if escaped {
-        ErrorKind::Escaped
-    } else {
-        ErrorKind::Char
-    };
-    Err(nom::Err::Error(Error::new(rest, error_kind)))
+    if escaped {
+        return Err(nom::Err::Failure(Error::new(rest, ErrorKind::Escaped)));
+    }
+
+    Err(nom::Err::Error(Error::new(rest, ErrorKind::Char)))
 }
 
 fn unescape_char(ch: char) -> Option<char> {
@@ -340,35 +336,11 @@ fn unescape_char(ch: char) -> Option<char> {
     }
 }
 
-fn contains_invalid_escape_in_quoted_string(input: &str) -> bool {
-    let mut in_quoted = false;
-    let mut escaped = false;
-
-    for ch in input.chars() {
-        if !in_quoted {
-            if ch == '\'' {
-                in_quoted = true;
-                escaped = false;
-            }
-            continue;
-        }
-
-        if escaped {
-            if unescape_char(ch).is_none() {
-                return true;
-            }
-            escaped = false;
-            continue;
-        }
-
-        match ch {
-            '\\' => escaped = true,
-            '\'' => in_quoted = false,
-            _ => {}
-        }
+fn is_invalid_escape_error(err: &nom::Err<Error<&str>>) -> bool {
+    match err {
+        nom::Err::Error(error) | nom::Err::Failure(error) => error.code == ErrorKind::Escaped,
+        nom::Err::Incomplete(_) => false,
     }
-
-    escaped
 }
 
 fn bare_value(input: &str) -> IResult<&str, Value> {
@@ -664,6 +636,20 @@ mod tests {
     fn reports_trailing_escape_sequence() {
         let err = parse_query("where metadata.name == 'bad\\").expect_err("query must fail");
         assert_eq!(err, "invalid escape sequence in quoted string");
+    }
+
+    #[test]
+    fn reports_invalid_escape_with_bare_apostrophe_before_quoted_literal() {
+        let err = parse_query("where metadata.name == O'Reilly and metadata.note == 'bad\\x'")
+            .expect_err("query must fail");
+        assert_eq!(err, "invalid escape sequence in quoted string");
+    }
+
+    #[test]
+    fn does_not_report_invalid_escape_for_bare_apostrophe_on_non_escape_parse_error() {
+        let err = parse_query("where metadata.name == O'Reilly\\ order by")
+            .expect_err("query must fail");
+        assert_eq!(err, "invalid query syntax");
     }
 
     #[test]
