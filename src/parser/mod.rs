@@ -177,11 +177,28 @@ fn select_separator(input: &str) -> IResult<&str, ()> {
             (),
             terminated(
                 multispace1,
-                not(peek(alt((tag_no_case("order"), tag_no_case("select"))))),
+                not(peek(alt((order_by_clause_start, select_clause_start)))),
             ),
         ),
     ))
     .parse(input)
+}
+
+fn order_by_clause_start(input: &str) -> IResult<&str, ()> {
+    value(
+        (),
+        tuple((
+            tag_no_case("order"),
+            multispace1,
+            tag_no_case("by"),
+            multispace1,
+        )),
+    )
+    .parse(input)
+}
+
+fn select_clause_start(input: &str) -> IResult<&str, ()> {
+    value((), tuple((tag_no_case("select"), multispace1))).parse(input)
 }
 
 fn order_by_clause(input: &str) -> IResult<&str, Vec<SortKey>> {
@@ -465,6 +482,55 @@ mod tests {
         .expect("must parse valid query");
 
         assert_eq!(ast.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            ast.order_by.expect("must parse order")[0].direction,
+            SortDirection::Desc
+        );
+    }
+
+    #[test]
+    fn parses_select_paths_with_order_prefix() {
+        let ast =
+            parse_query("where metadata.namespace == demo-a select metadata.name order.status")
+                .expect("must parse valid query");
+
+        assert_eq!(
+            ast.select_paths,
+            Some(vec![
+                "metadata.name".to_string(),
+                "order.status".to_string(),
+            ])
+        );
+        assert_eq!(ast.order_by, None);
+    }
+
+    #[test]
+    fn parses_select_paths_with_select_prefix() {
+        let ast =
+            parse_query("where metadata.namespace == demo-a select metadata.name select.path")
+                .expect("must parse valid query");
+
+        assert_eq!(
+            ast.select_paths,
+            Some(vec!["metadata.name".to_string(), "select.path".to_string(),])
+        );
+        assert_eq!(ast.order_by, None);
+    }
+
+    #[test]
+    fn parses_select_paths_with_order_prefix_before_order_by_clause() {
+        let ast = parse_query(
+            "where metadata.namespace == demo-a select metadata.name order.status order by metadata.name desc",
+        )
+        .expect("must parse valid query");
+
+        assert_eq!(
+            ast.select_paths,
+            Some(vec![
+                "metadata.name".to_string(),
+                "order.status".to_string(),
+            ])
+        );
         assert_eq!(
             ast.order_by.expect("must parse order")[0].direction,
             SortDirection::Desc
