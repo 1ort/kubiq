@@ -89,7 +89,7 @@ impl std::fmt::Display for CliError {
             ),
             Self::Parse(error) => write!(
                 f,
-                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [select <paths>]`.\nExample: `kubiq pods where metadata.namespace == demo-a select metadata.name`"
+                "parse error: {error}\n\nTip: query format is `<resource> where <predicates> [order by <path> [asc|desc]] [select <paths>]`.\nExample: `kubiq pods where metadata.namespace == demo-a order by metadata.name desc select metadata.name`"
             ),
             Self::K8s(error) => write!(f, "k8s error: {error}\n\n{}", k8s_tip(error)),
             Self::Output(error) => write!(

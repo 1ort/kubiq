@@ -12,6 +12,7 @@ Implemented:
 - `list` queries
 - Automatic pagination/batching for large `list` responses
 - `where` filtering with `==`, `!=`, `AND`
+- `order by` sorting with multi-key support and `asc|desc`
 - Safe server-side filter pushdown for subset of `where ==` (`metadata.name`, `metadata.namespace`, `metadata.labels.*`)
 - `select` projection
 - Output formats: `table`, `json`, `yaml`
@@ -50,7 +51,7 @@ cargo run -- <args>
 ## Usage
 
 ```bash
-kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [select <paths>]
+kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [order by <keys>] [select <paths>]
 ```
 
 Options:
@@ -79,6 +80,12 @@ Semantics:
 - Supports comma or whitespace-separated paths
 - Parent path selection reconstructs nested output (`select metadata`)
 
+### Order by
+
+- Sorts filtered objects before output
+- Supports multi-key sorting (`order by spec.priority desc, metadata.name asc`)
+- Default direction is `asc`
+
 ## Examples
 
 ```bash
@@ -87,6 +94,9 @@ kubiq pods where metadata.namespace == demo-a
 
 # Filter + projection
 kubiq pods where metadata.namespace == demo-a select metadata.name,metadata.namespace
+
+# Filter + sorting
+kubiq pods where metadata.namespace == demo-a order by metadata.name desc
 
 # Parent projection (nested object in json/yaml)
 kubiq -o json pods where metadata.name == worker-a select metadata
@@ -133,7 +143,7 @@ cargo run -- --help
 
 ## Architecture (High Level)
 
-`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> Projection -> Output`
+`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> Sort -> Projection -> Output`
 
 ## Project Layout
 

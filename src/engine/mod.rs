@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::{dynamic_object::DynamicObject, parser};
 use serde_json::Value;
 
@@ -5,12 +7,14 @@ use serde_json::Value;
 pub struct QueryPlan {
     pub predicates: Vec<parser::Predicate>,
     pub select_paths: Option<Vec<String>>,
+    pub sort_keys: Option<Vec<parser::SortKey>>,
 }
 
 pub fn build_plan(ast: parser::QueryAst) -> QueryPlan {
     QueryPlan {
         predicates: ast.predicates,
         select_paths: ast.select_paths,
+        sort_keys: ast.order_by,
     }
 }
 
@@ -23,6 +27,127 @@ pub fn evaluate(
         .filter(|object| matches_all(object, &plan.predicates))
         .cloned()
         .collect()
+}
+
+pub fn sort_objects(
+    plan: &QueryPlan,
+    objects: &[DynamicObject],
+) -> Vec<DynamicObject> {
+    let mut sorted = objects.to_vec();
+
+    let Some(sort_keys) = plan.sort_keys.as_deref() else {
+        return sorted;
+    };
+
+    sorted.sort_by(|left, right| compare_objects(left, right, sort_keys));
+    sorted
+}
+
+fn compare_objects(
+    left: &DynamicObject,
+    right: &DynamicObject,
+    sort_keys: &[parser::SortKey],
+) -> Ordering {
+    for key in sort_keys {
+        let ordering = compare_values(left.get(&key.path), right.get(&key.path), key.direction);
+
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+
+    Ordering::Equal
+}
+
+fn compare_values(
+    left: Option<&Value>,
+    right: Option<&Value>,
+    direction: parser::SortDirection,
+) -> Ordering {
+    match (to_sort_value(left), to_sort_value(right)) {
+        (SortValue::Nullish, SortValue::Nullish) => Ordering::Equal,
+        (SortValue::Nullish, _) => match direction {
+            parser::SortDirection::Asc => Ordering::Less,
+            parser::SortDirection::Desc => Ordering::Greater,
+        },
+        (_, SortValue::Nullish) => match direction {
+            parser::SortDirection::Asc => Ordering::Greater,
+            parser::SortDirection::Desc => Ordering::Less,
+        },
+        (SortValue::Concrete(left), SortValue::Concrete(right)) => {
+            compare_non_null_values(left, right, direction)
+        }
+    }
+}
+
+fn compare_non_null_values(
+    left: &Value,
+    right: &Value,
+    direction: parser::SortDirection,
+) -> Ordering {
+    let left_rank = value_rank(left);
+    let right_rank = value_rank(right);
+
+    let mut ordering = left_rank.cmp(&right_rank);
+    if ordering == Ordering::Equal {
+        ordering = compare_same_rank(left, right);
+    }
+
+    match direction {
+        parser::SortDirection::Asc => ordering,
+        parser::SortDirection::Desc => ordering.reverse(),
+    }
+}
+
+fn compare_same_rank(
+    left: &Value,
+    right: &Value,
+) -> Ordering {
+    match (left, right) {
+        (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
+        (Value::Number(left), Value::Number(right)) => compare_numbers(left, right),
+        (Value::String(left), Value::String(right)) => left.cmp(right),
+        _ => Ordering::Equal,
+    }
+}
+
+fn compare_numbers(
+    left: &serde_json::Number,
+    right: &serde_json::Number,
+) -> Ordering {
+    if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
+        return left.cmp(&right);
+    }
+
+    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+        return left.cmp(&right);
+    }
+
+    match (left.as_f64(), right.as_f64()) {
+        (Some(left), Some(right)) => left.partial_cmp(&right).unwrap_or(Ordering::Equal),
+        _ => Ordering::Equal,
+    }
+}
+
+fn value_rank(value: &Value) -> u8 {
+    match value {
+        Value::Bool(_) => 0,
+        Value::Number(_) => 1,
+        Value::String(_) => 2,
+        _ => 3,
+    }
+}
+
+enum SortValue<'a> {
+    Nullish,
+    Concrete(&'a Value),
+}
+
+fn to_sort_value(value: Option<&Value>) -> SortValue<'_> {
+    match value {
+        Some(Value::Null) | None => SortValue::Nullish,
+        Some(value) => SortValue::Concrete(value),
+    }
 }
 
 fn matches_all(
@@ -61,10 +186,10 @@ mod tests {
 
     use crate::{
         dynamic_object::DynamicObject,
-        parser::{Operator, Predicate},
+        parser::{Operator, Predicate, SortDirection, SortKey},
     };
 
-    use super::{QueryPlan, evaluate};
+    use super::{QueryPlan, evaluate, sort_objects};
 
     #[test]
     fn keeps_only_matching_objects() {
@@ -87,6 +212,7 @@ mod tests {
                 value: Value::String("default".to_string()),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         let result = evaluate(
@@ -117,6 +243,7 @@ mod tests {
                 value: Value::String("worker-1".to_string()),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         let ne_plan = QueryPlan {
@@ -126,6 +253,7 @@ mod tests {
                 value: Value::String("worker-1".to_string()),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         assert!(evaluate(&eq_plan, std::slice::from_ref(&object)).is_empty());
@@ -145,6 +273,7 @@ mod tests {
                 value: Value::String("2".to_string()),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         let ne_plan = QueryPlan {
@@ -154,9 +283,205 @@ mod tests {
                 value: Value::String("2".to_string()),
             }],
             select_paths: None,
+            sort_keys: None,
         };
 
         assert!(evaluate(&eq_plan, std::slice::from_ref(&object)).is_empty());
         assert!(evaluate(&ne_plan, &[object]).is_empty());
+    }
+
+    #[test]
+    fn sorts_by_single_key_asc() {
+        let objects = vec![
+            object(&[("metadata.name", Value::String("pod-c".to_string()))]),
+            object(&[("metadata.name", Value::String("pod-a".to_string()))]),
+            object(&[("metadata.name", Value::String("pod-b".to_string()))]),
+        ];
+
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            select_paths: None,
+            sort_keys: Some(vec![SortKey {
+                path: "metadata.name".to_string(),
+                direction: SortDirection::Asc,
+            }]),
+        };
+
+        let sorted = sort_objects(&plan, &objects);
+        let names = names(&sorted);
+        assert_eq!(names, vec!["pod-a", "pod-b", "pod-c"]);
+    }
+
+    #[test]
+    fn sorts_by_single_key_desc() {
+        let objects = vec![
+            object(&[("spec.priority", Value::from(1))]),
+            object(&[("spec.priority", Value::from(3))]),
+            object(&[("spec.priority", Value::from(2))]),
+        ];
+
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            select_paths: None,
+            sort_keys: Some(vec![SortKey {
+                path: "spec.priority".to_string(),
+                direction: SortDirection::Desc,
+            }]),
+        };
+
+        let sorted = sort_objects(&plan, &objects);
+        let priorities = values(&sorted, "spec.priority");
+        assert_eq!(
+            priorities,
+            vec![Value::from(3), Value::from(2), Value::from(1)]
+        );
+    }
+
+    #[test]
+    fn sorts_nullish_sql_style() {
+        let objects = vec![
+            object(&[
+                ("spec.rank", Value::from(2)),
+                ("metadata.name", Value::String("c".to_string())),
+            ]),
+            object(&[("metadata.name", Value::String("a".to_string()))]),
+            object(&[
+                ("spec.rank", Value::Null),
+                ("metadata.name", Value::String("b".to_string())),
+            ]),
+            object(&[
+                ("spec.rank", Value::from(1)),
+                ("metadata.name", Value::String("d".to_string())),
+            ]),
+        ];
+
+        let asc_plan = QueryPlan {
+            predicates: Vec::new(),
+            select_paths: None,
+            sort_keys: Some(vec![SortKey {
+                path: "spec.rank".to_string(),
+                direction: SortDirection::Asc,
+            }]),
+        };
+
+        let desc_plan = QueryPlan {
+            predicates: Vec::new(),
+            select_paths: None,
+            sort_keys: Some(vec![SortKey {
+                path: "spec.rank".to_string(),
+                direction: SortDirection::Desc,
+            }]),
+        };
+
+        let asc = names(&sort_objects(&asc_plan, &objects));
+        let desc = names(&sort_objects(&desc_plan, &objects));
+
+        assert_eq!(asc, vec!["a", "b", "d", "c"]);
+        assert_eq!(desc, vec!["c", "d", "a", "b"]);
+    }
+
+    #[test]
+    fn sorts_mixed_types_with_fixed_precedence() {
+        let objects = vec![
+            object(&[
+                ("spec.value", Value::String("z".to_string())),
+                ("metadata.name", Value::String("s".to_string())),
+            ]),
+            object(&[
+                ("spec.value", Value::from(10)),
+                ("metadata.name", Value::String("n".to_string())),
+            ]),
+            object(&[
+                ("spec.value", Value::Bool(true)),
+                ("metadata.name", Value::String("b".to_string())),
+            ]),
+            object(&[
+                ("spec.value", serde_json::json!({"k": "v"})),
+                ("metadata.name", Value::String("o".to_string())),
+            ]),
+        ];
+
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            select_paths: None,
+            sort_keys: Some(vec![SortKey {
+                path: "spec.value".to_string(),
+                direction: SortDirection::Asc,
+            }]),
+        };
+
+        let sorted = names(&sort_objects(&plan, &objects));
+        assert_eq!(sorted, vec!["b", "n", "s", "o"]);
+    }
+
+    #[test]
+    fn sorts_by_multiple_keys_and_is_stable() {
+        let objects = vec![
+            object(&[
+                ("spec.rank", Value::from(1)),
+                ("metadata.name", Value::String("beta".to_string())),
+            ]),
+            object(&[
+                ("spec.rank", Value::from(1)),
+                ("metadata.name", Value::String("alpha".to_string())),
+            ]),
+            object(&[
+                ("spec.rank", Value::from(2)),
+                ("metadata.name", Value::String("gamma".to_string())),
+            ]),
+            object(&[("spec.rank", Value::from(1))]),
+        ];
+
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            select_paths: None,
+            sort_keys: Some(vec![
+                SortKey {
+                    path: "spec.rank".to_string(),
+                    direction: SortDirection::Asc,
+                },
+                SortKey {
+                    path: "metadata.name".to_string(),
+                    direction: SortDirection::Asc,
+                },
+            ]),
+        };
+
+        let sorted = sort_objects(&plan, &objects);
+        let names = names(&sorted);
+
+        assert_eq!(names, vec!["-", "alpha", "beta", "gamma"]);
+    }
+
+    fn object(entries: &[(&str, Value)]) -> DynamicObject {
+        let mut fields = BTreeMap::new();
+        for (path, value) in entries {
+            fields.insert((*path).to_string(), value.clone());
+        }
+        DynamicObject { fields }
+    }
+
+    fn names(objects: &[DynamicObject]) -> Vec<String> {
+        objects
+            .iter()
+            .map(|object| {
+                object
+                    .fields
+                    .get("metadata.name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("-")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn values(
+        objects: &[DynamicObject],
+        path: &str,
+    ) -> Vec<Value> {
+        objects
+            .iter()
+            .map(|object| object.fields.get(path).cloned().unwrap_or(Value::Null))
+            .collect()
     }
 }

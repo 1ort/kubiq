@@ -59,6 +59,54 @@ fn e2e_table_where_select_for_core_resource() {
 }
 
 #[test]
+fn e2e_table_order_by_for_core_resource() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "order",
+        "by",
+        "metadata.name",
+        "desc",
+        "select",
+        "metadata.name",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let items = rows.as_array().expect("must return array");
+    assert!(items.len() >= 2, "expected at least two pods in demo-a");
+
+    let names: Vec<String> = items
+        .iter()
+        .filter_map(|row| {
+            row.get("metadata.name")
+                .and_then(JsonValue::as_str)
+                .map(ToString::to_string)
+        })
+        .collect();
+    assert_eq!(names.len(), items.len(), "every row must have metadata.name");
+
+    let mut expected = names.clone();
+    expected.sort_by(|left, right| right.cmp(left));
+    assert_eq!(names, expected);
+}
+
+#[test]
 fn e2e_json_select_parent_path_is_nested() {
     if !e2e_enabled() || !cluster_ready() {
         return;
@@ -102,6 +150,66 @@ fn e2e_json_select_parent_path_is_nested() {
         metadata.get("namespace"),
         Some(&JsonValue::String("demo-a".to_string()))
     );
+}
+
+#[test]
+fn e2e_json_order_by_for_crd_widget() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "widgets",
+        "where",
+        "metadata.name",
+        "!=",
+        "widget-z",
+        "-o",
+        "json",
+        "order",
+        "by",
+        "spec.owner",
+        "desc",
+        ",",
+        "metadata.name",
+        "asc",
+        "select",
+        "metadata.name,spec.owner",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let items = rows.as_array().expect("must return array");
+    assert!(items.len() >= 2, "expected at least two widgets");
+
+    let mut previous: Option<(String, String)> = None;
+    for row in items {
+        let owner = row
+            .get("spec.owner")
+            .and_then(JsonValue::as_str)
+            .expect("spec.owner must be present")
+            .to_string();
+        let name = row
+            .get("metadata.name")
+            .and_then(JsonValue::as_str)
+            .expect("metadata.name must be present")
+            .to_string();
+
+        if let Some((prev_owner, prev_name)) = previous.as_ref() {
+            if owner == *prev_owner {
+                assert!(name >= *prev_name, "metadata.name must be asc within same owner");
+            } else {
+                assert!(owner <= *prev_owner, "spec.owner must be desc");
+            }
+        }
+        previous = Some((owner, name));
+    }
 }
 
 #[test]

@@ -17,6 +17,19 @@
 
 Строковый литерал в `'...'` всегда string.
 
+## Order by / sorting
+
+- Сортировка применяется после `where` и до `select`/рендера.
+- Поддерживается multi-key сортировка: `order by a, b desc, c asc`.
+- Направление по умолчанию: `asc`.
+- Политика `null`/missing: SQL-style
+  - `asc`: `null` и missing идут первыми
+  - `desc`: `null` и missing идут последними
+- Mixed types сравниваются по фиксированному приоритету типов:
+  - `bool < number < string < other(json)` для `asc`
+  - для `desc` порядок инвертируется
+- Для полностью равных ключей сохраняется исходный порядок (stable sort).
+
 ## Select / output projection
 
 - `select` оставляет только указанные пути
