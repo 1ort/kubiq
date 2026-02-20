@@ -14,8 +14,10 @@
 10. `plans/mvp_plan.md`
 11. `plans/roadmap_v1.md`
 12. `plans/v0_2_0_plan.md`
+13. `releases/v0.2.0.md`
 
 ## Статус
 
+- Текущий релизный baseline: **`v0.2.0`**
 - MVP: **готов** (`v0.1.0`)
 - Roadmap до `v1.0.0`: см. `plans/roadmap_v1.md`

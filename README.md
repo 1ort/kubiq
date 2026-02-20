@@ -2,9 +2,11 @@
 
 A lightweight CLI to run SQL-like queries against the Kubernetes API (core resources and CRDs).
 
-## MVP Status
+## Release Status
 
-**MVP is ready** (`v0.1.0`).
+**Current release baseline: `v0.2.0`**.
+
+MVP (`v0.1.0`) is complete, and milestone `v0.2.x` query-completeness features are available.
 
 Implemented:
 
