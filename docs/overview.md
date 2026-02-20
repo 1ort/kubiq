@@ -12,7 +12,10 @@
 8. `development/testing.md`
 9. `development/error_handling.md`
 10. `plans/mvp_plan.md`
+11. `plans/roadmap_v1.md`
+12. `plans/v0_2_0_plan.md`
 
 ## Статус
 
 - MVP: **готов** (`v0.1.0`)
+- Roadmap до `v1.0.0`: см. `plans/roadmap_v1.md`
