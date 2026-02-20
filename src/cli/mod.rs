@@ -1,6 +1,6 @@
 use clap::{Parser, ValueEnum, error::ErrorKind};
 
-use crate::{engine, error::CliError, k8s, output, parser};
+use crate::{dynamic_object::DynamicObject, engine, error::CliError, k8s, output, parser};
 
 #[derive(Clone, Debug, ValueEnum)]
 enum OutputArg {
@@ -77,11 +77,13 @@ pub fn run() -> Result<(), CliError> {
         output::DetailLevel::Summary
     };
 
+    let output_paths = output_paths_for_rows(&plan, &rows);
+
     output::print(
         &rows,
         map_output_format(args.output),
         detail,
-        select_paths_for_output(&plan),
+        output_paths.as_deref(),
     )
     .map_err(CliError::Output)?;
 
@@ -183,10 +185,17 @@ fn sort_direction_to_engine(direction: parser::SortDirection) -> engine::EngineS
     }
 }
 
-fn select_paths_for_output(plan: &engine::QueryPlan) -> Option<&[String]> {
+fn output_paths_for_rows(
+    plan: &engine::QueryPlan,
+    rows: &[DynamicObject],
+) -> Option<Vec<String>> {
     match &plan.selection {
-        Some(engine::EngineSelection::Paths(paths)) => Some(paths.as_slice()),
-        _ => None,
+        Some(engine::EngineSelection::Paths(paths)) => Some(paths.clone()),
+        Some(engine::EngineSelection::Aggregations(_)) => rows
+            .first()
+            .map(|row| row.fields.keys().cloned().collect())
+            .or_else(|| Some(Vec::new())),
+        None => None,
     }
 }
 
@@ -251,9 +260,10 @@ mod tests {
 
     use super::{
         CliArgs, OutputArg, ast_to_engine_plan, format_k8s_diagnostic,
-        format_planner_diagnostic, parse_query_tokens,
+        format_planner_diagnostic, output_paths_for_rows, parse_query_tokens,
     };
     use crate::{
+        dynamic_object::DynamicObject,
         engine::{
             EngineAggregationFunction, EngineOperator, EngineSelection, EngineSortDirection,
         },
@@ -401,6 +411,51 @@ mod tests {
         assert_eq!(expressions[0].path, None);
         assert_eq!(expressions[1].function, EngineAggregationFunction::Sum);
         assert_eq!(expressions[1].path.as_deref(), Some("spec.replicas"));
+    }
+
+    #[test]
+    fn output_paths_for_rows_uses_projection_paths() {
+        let plan = crate::engine::QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Paths(vec![
+                "metadata.name".to_string(),
+                "metadata.namespace".to_string(),
+            ])),
+            sort_keys: None,
+        };
+
+        let paths = output_paths_for_rows(&plan, &[]).expect("paths must be present");
+        assert_eq!(
+            paths,
+            vec![
+                "metadata.name".to_string(),
+                "metadata.namespace".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn output_paths_for_rows_uses_aggregation_row_keys() {
+        let plan = crate::engine::QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(Vec::new())),
+            sort_keys: None,
+        };
+
+        let row = DynamicObject {
+            fields: [
+                ("count(*)".to_string(), serde_json::Value::from(2)),
+                ("sum(spec.replicas)".to_string(), serde_json::Value::from(5)),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let paths = output_paths_for_rows(&plan, &[row]).expect("paths must be present");
+        assert_eq!(
+            paths,
+            vec!["count(*)".to_string(), "sum(spec.replicas)".to_string()]
+        );
     }
 
     #[test]

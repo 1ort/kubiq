@@ -336,6 +336,10 @@ fn e2e_json_aggregation_count_for_core_resource() {
         .and_then(JsonValue::as_u64)
         .expect("count(*) must be uint");
     assert!(count >= 1, "expected at least one pod in demo-a namespace");
+    assert!(
+        first.get("name").is_none(),
+        "aggregation row must not be rewritten into summary `name` field"
+    );
 }
 
 #[test]
@@ -360,4 +364,31 @@ fn e2e_aggregation_sum_non_numeric_returns_error() {
     let stderr = String::from_utf8(output.stderr).expect("stderr must be utf8");
     assert!(stderr.contains("engine error:"));
     assert!(stderr.contains("expects number"));
+}
+
+#[test]
+fn e2e_table_aggregation_shows_aggregate_column() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "select",
+        "count(*)",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout must be valid UTF-8");
+    assert!(stdout.contains("| count(*) |"));
+    assert!(!stdout.contains("| name |"));
 }
