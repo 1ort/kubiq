@@ -3,7 +3,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::{char, multispace0, multispace1},
-    combinator::{all_consuming, map, not, opt, peek, recognize, value},
+    combinator::{all_consuming, map, not, opt, peek, recognize, value, verify},
     error::{Error, ErrorKind},
     multi::{many0, separated_list1},
     sequence::{delimited, preceded, terminated, tuple},
@@ -53,6 +53,9 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
 
     match all_consuming(delimited(multispace0, query_ast, multispace0)).parse(trimmed) {
         Ok((_, ast)) => Ok(ast),
+        Err(err) if is_invalid_escape_error(&err) => {
+            Err("invalid escape sequence in quoted string".to_string())
+        }
         Err(_) => Err("invalid query syntax".to_string()),
     }
 }
@@ -78,10 +81,25 @@ fn starts_with_where_keyword(input: &str) -> bool {
 
 fn normalize_arg(arg: &str) -> String {
     if arg.chars().any(char::is_whitespace) {
-        format!("'{}'", arg)
+        format!("'{}'", escape_for_single_quoted(arg))
     } else {
         arg.to_string()
     }
+}
+
+fn escape_for_single_quoted(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn query_ast(input: &str) -> IResult<&str, QueryAst> {
@@ -268,16 +286,69 @@ fn predicate_value(input: &str) -> IResult<&str, Value> {
 }
 
 fn quoted_string_value(input: &str) -> IResult<&str, Value> {
-    map(
-        delimited(char('\''), take_while(|c| c != '\''), char('\'')),
-        |s: &str| Value::String(s.to_string()),
-    )
-    .parse(input)
+    let Some(rest) = input.strip_prefix('\'') else {
+        return Err(nom::Err::Error(Error::new(input, ErrorKind::Char)));
+    };
+
+    let mut parsed = String::new();
+    let mut escaped = false;
+
+    for (idx, ch) in rest.char_indices() {
+        if escaped {
+            match unescape_char(ch) {
+                Some(unescaped) => {
+                    parsed.push(unescaped);
+                    escaped = false;
+                }
+                None => {
+                    return Err(nom::Err::Failure(Error::new(
+                        &rest[idx..],
+                        ErrorKind::Escaped,
+                    )));
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '\'' => return Ok((&rest[idx + ch.len_utf8()..], Value::String(parsed))),
+            _ => parsed.push(ch),
+        }
+    }
+
+    if escaped {
+        return Err(nom::Err::Failure(Error::new(rest, ErrorKind::Escaped)));
+    }
+
+    Err(nom::Err::Error(Error::new(rest, ErrorKind::Char)))
+}
+
+fn unescape_char(ch: char) -> Option<char> {
+    match ch {
+        '\\' => Some('\\'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        _ => None,
+    }
+}
+
+fn is_invalid_escape_error(err: &nom::Err<Error<&str>>) -> bool {
+    match err {
+        nom::Err::Error(error) | nom::Err::Failure(error) => error.code == ErrorKind::Escaped,
+        nom::Err::Incomplete(_) => false,
+    }
 }
 
 fn bare_value(input: &str) -> IResult<&str, Value> {
     map(
-        take_while1(|c: char| !c.is_ascii_whitespace()),
+        verify(
+            take_while1(|c: char| !c.is_ascii_whitespace()),
+            |token: &str| !token.starts_with('\''),
+        ),
         parse_scalar_value,
     )
     .parse(input)
@@ -357,6 +428,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_bare_value_with_apostrophe() {
+        let ast = parse_query("where metadata.name == O'Reilly").expect("must parse valid query");
+        assert_eq!(
+            ast.predicates[0].value,
+            Value::String("O'Reilly".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_quoted_value_with_supported_escapes() {
+        let ast = parse_query(
+            "where metadata.note == 'line1\\nline2\\tcol\\rret \\\\ \\' \\\"'",
+        )
+        .expect("must parse valid query");
+
+        assert_eq!(
+            ast.predicates[0].value,
+            Value::String("line1\nline2\tcol\rret \\ ' \"".to_string())
+        );
+    }
+
+    #[test]
     fn parses_where_from_args() {
         let args = vec![
             "where".to_string(),
@@ -368,6 +461,21 @@ mod tests {
         assert_eq!(ast.predicates.len(), 1);
         assert_eq!(ast.predicates[0].value, Value::String("demo-a".to_string()));
         assert_eq!(ast.select_paths, None);
+    }
+
+    #[test]
+    fn escapes_single_quotes_in_args_with_spaces() {
+        let args = vec![
+            "where".to_string(),
+            "metadata.name".to_string(),
+            "==".to_string(),
+            "O'Reilly Media".to_string(),
+        ];
+        let ast = parse_query_args(&args).expect("must parse valid args");
+        assert_eq!(
+            ast.predicates[0].value,
+            Value::String("O'Reilly Media".to_string())
+        );
     }
 
     #[test]
@@ -515,6 +623,33 @@ mod tests {
             Some(vec!["metadata.name".to_string(), "select.path".to_string(),])
         );
         assert_eq!(ast.order_by, None);
+    }
+
+    #[test]
+    fn reports_invalid_escape_sequence() {
+        let err = parse_query("where metadata.name == 'bad\\xescape'")
+            .expect_err("query must fail");
+        assert_eq!(err, "invalid escape sequence in quoted string");
+    }
+
+    #[test]
+    fn reports_trailing_escape_sequence() {
+        let err = parse_query("where metadata.name == 'bad\\").expect_err("query must fail");
+        assert_eq!(err, "invalid escape sequence in quoted string");
+    }
+
+    #[test]
+    fn reports_invalid_escape_with_bare_apostrophe_before_quoted_literal() {
+        let err = parse_query("where metadata.name == O'Reilly and metadata.note == 'bad\\x'")
+            .expect_err("query must fail");
+        assert_eq!(err, "invalid escape sequence in quoted string");
+    }
+
+    #[test]
+    fn does_not_report_invalid_escape_for_bare_apostrophe_on_non_escape_parse_error() {
+        let err = parse_query("where metadata.name == O'Reilly\\ order by")
+            .expect_err("query must fail");
+        assert_eq!(err, "invalid query syntax");
     }
 
     #[test]

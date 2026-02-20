@@ -9,11 +9,7 @@
 
 ### P0 (высокий приоритет)
 
-1. Исправить обработку значений с `'` в аргументах CLI
-- Где: `src/parser/mod.rs` (`normalize_arg`, `quoted_string_value`)
-- Проблема: аргументы с апострофом ломают синтаксис, escape-последовательности не поддерживаются.
-- Что сделать: добавить корректное экранирование/разбор quoted string (например `\'`) и тесты на такие входы.
-- Критерий готовности: запросы вида `where metadata.name == O'Reilly` корректно парсятся в string literal.
+Открытых P0 задач нет.
 
 ### P1 (средний приоритет)
 
@@ -56,4 +52,5 @@
 - Server-side filtering planner + pushdown подмножества `where` (`==`/`!=` для metadata/labels) с typed fallback diagnostics
 - Typed mapper ошибок K8s list/discovery без string-эвристик
 - Pushdown planner вынесен из CLI в `k8s::planner`
+- Исправлен парсинг string-литералов с `'` и escape-последовательностями в CLI query args/parser
 - `engine` отвязан от `parser` типов: `engine::QueryPlan` хранит engine-owned типы, AST конвертируется на CLI boundary
