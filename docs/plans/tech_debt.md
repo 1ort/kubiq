@@ -3,7 +3,7 @@
 ## Top product gaps
 
 1. Watch-режим отсутствует
-2. Aggregation отсутствует
+2. Потоковая обработка результатов (`streaming`) отсутствует
 
 ## Refactoring and quality backlog
 
@@ -13,25 +13,25 @@
 
 ### P1 (средний приоритет)
 
-2. Убрать создание отдельного Tokio runtime на каждый `list`
+1. Убрать создание отдельного Tokio runtime на каждый `list`
 - Где: `src/k8s/mod.rs` (`Runtime::new`, `block_on`)
 - Проблема: избыточные накладные расходы и ухудшение composability библиотечного API.
 - Что сделать: сделать async путь первичным (`pub async fn list_async`), в бинарнике использовать `#[tokio::main]`.
 - Критерий готовности: runtime инициализируется один раз на процесс; sync-wrapper (если нужен) тонкий и изолированный.
 
-3. Добавить кэш discovery/разрешения ресурса
+2. Добавить кэш discovery/разрешения ресурса
 - Где: `src/k8s/mod.rs` (`resolve_api_resource`)
 - Проблема: discovery запускается на каждый запрос, что увеличивает latency и нагрузку на API server.
 - Что сделать: локальный cache (`resource -> ApiResource`) с инвалидацией по TTL/ошибке.
 - Критерий готовности: повторные запросы к одному ресурсу не вызывают полный discovery каждый раз.
 
-4. Свести flatten/unflatten path-логику в единый модуль
+3. Свести flatten/unflatten path-логику в единый модуль
 - Где: `src/k8s/mod.rs` (`flatten_value`), `src/output/mod.rs` (`insert_nested_value`)
 - Проблема: дублирование и риск расхождения семантики путей/массивов.
 - Что сделать: вынести path utilities в отдельный модуль и использовать в fetch/output.
 - Критерий готовности: единый набор тестов покрывает flatten + reconstruction roundtrip.
 
-5. Корректно обрабатывать map-ключи с `.` при describe/select parent path
+4. Корректно обрабатывать map-ключи с `.` при describe/select parent path
 - Где: `src/k8s/mod.rs` (`flatten_value`), `src/output/mod.rs` (`insert_nested_value`, `select_value`)
 - Проблема: ключи вида `kubectl.kubernetes.io/...` интерпретируются как path-сегменты и искажаются при reconstruction.
 - Что сделать: добавить экранирование path-сегментов (или альтернативное кодирование), чтобы flatten/unflatten сохранял исходные ключи map без расщепления по `.`.

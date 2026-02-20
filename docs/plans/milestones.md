@@ -9,10 +9,10 @@
 7. Pagination/batching для `list` реализованы — ✅
 8. Typed error hierarchy (`CliError`/`K8sError`/`OutputError`) реализована — ✅
 9. Server-side filtering (safe pushdown subset) реализован — ✅
+10. Query completeness baseline (`sort`, `aggregation`, best-effort server-side filtering pushdown) — ✅
 
 ## Next milestones toward v1.0.0
 
-10. Query completeness baseline (`sort`, `aggregation`, best-effort server-side filtering pushdown)
 11. Streaming and watch
 12. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache)
 13. Query language v2 (`OR`, parentheses, `IN`, extended string operators)

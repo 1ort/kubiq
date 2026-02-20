@@ -1,6 +1,6 @@
 # Roadmap to v1.0.0
 
-Текущий статус: `v0.1.0` (MVP + post-MVP улучшения).
+Текущий статус: `v0.2.0` (Milestone 10 "Query completeness baseline" закрыт).
 
 Цель roadmap: довести Kubiq до production-ready `v1.0.0` с предсказуемым DSL, устойчивым runtime-поведением и стабильным UX для операторских сценариев.
 

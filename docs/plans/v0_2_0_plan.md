@@ -2,6 +2,8 @@
 
 Цель `v0.2.0`: закрыть milestone "Query completeness baseline" из `docs/plans/roadmap_v1.md`.
 
+Статус: **completed**.
+
 В релиз входят 3 фичи:
 1. `order by` / sorting
 2. `aggregation` (`count`, `sum`, `min`, `max`, `avg`)
@@ -103,8 +105,8 @@
 
 ## Release checklist for v0.2.0
 
-1. Все 3 epic-ветки слиты в `master`.
-2. Unit + e2e green.
-3. Обновлены: `README.md`, `docs/product/cli_spec.md`, `docs/query_language/*`, `docs/development/testing.md`, `docs/development/error_handling.md`.
-4. Обновлены: `docs/plans/milestones.md`, `docs/plans/roadmap_v1.md`, `docs/plans/tech_debt.md`.
-5. Подготовлены release notes для `v0.2.0`.
+1. Все 3 epic-ветки слиты в `master`. ✅
+2. Unit + e2e green. ✅
+3. Обновлены: `README.md`, `docs/product/cli_spec.md`, `docs/query_language/*`, `docs/development/testing.md`, `docs/development/error_handling.md`. ✅
+4. Обновлены: `docs/plans/milestones.md`, `docs/plans/roadmap_v1.md`, `docs/plans/tech_debt.md`. ✅
+5. Подготовлены release notes для `v0.2.0`. ✅
