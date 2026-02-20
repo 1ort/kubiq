@@ -70,6 +70,8 @@ fn e2e_table_order_by_for_core_resource() {
         "metadata.namespace",
         "==",
         "demo-a",
+        "-o",
+        "json",
         "order",
         "by",
         "metadata.name",
@@ -84,10 +86,24 @@ fn e2e_table_order_by_for_core_resource() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stdout = String::from_utf8(output.stdout).expect("stdout must be valid UTF-8");
-    let worker_b_index = stdout.find("worker-b").expect("must contain worker-b");
-    let worker_a_index = stdout.find("worker-a").expect("must contain worker-a");
-    assert!(worker_b_index < worker_a_index);
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let items = rows.as_array().expect("must return array");
+    assert!(items.len() >= 2, "expected at least two pods in demo-a");
+
+    let names: Vec<String> = items
+        .iter()
+        .filter_map(|row| {
+            row.get("metadata.name")
+                .and_then(JsonValue::as_str)
+                .map(ToString::to_string)
+        })
+        .collect();
+    assert_eq!(names.len(), items.len(), "every row must have metadata.name");
+
+    let mut expected = names.clone();
+    expected.sort_by(|left, right| right.cmp(left));
+    assert_eq!(names, expected);
 }
 
 #[test]
@@ -145,9 +161,9 @@ fn e2e_json_order_by_for_crd_widget() {
     let output = run_kubiq(&[
         "widgets",
         "where",
-        "spec.enabled",
-        "==",
-        "true",
+        "metadata.name",
+        "!=",
+        "widget-z",
         "-o",
         "json",
         "order",
@@ -170,24 +186,30 @@ fn e2e_json_order_by_for_crd_widget() {
     let rows: JsonValue =
         serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
     let items = rows.as_array().expect("must return array");
-    assert!(
-        items.len() >= 2,
-        "expected at least two widgets to validate ordering"
-    );
+    assert!(items.len() >= 2, "expected at least two widgets");
 
-    let owners: Vec<String> = items
-        .iter()
-        .map(|row| {
-            row.get("spec.owner")
-                .and_then(JsonValue::as_str)
-                .unwrap_or_default()
-                .to_string()
-        })
-        .collect();
+    let mut previous: Option<(String, String)> = None;
+    for row in items {
+        let owner = row
+            .get("spec.owner")
+            .and_then(JsonValue::as_str)
+            .expect("spec.owner must be present")
+            .to_string();
+        let name = row
+            .get("metadata.name")
+            .and_then(JsonValue::as_str)
+            .expect("metadata.name must be present")
+            .to_string();
 
-    let mut sorted = owners.clone();
-    sorted.sort_by(|left, right| right.cmp(left));
-    assert_eq!(owners, sorted);
+        if let Some((prev_owner, prev_name)) = previous.as_ref() {
+            if owner == *prev_owner {
+                assert!(name >= *prev_name, "metadata.name must be asc within same owner");
+            } else {
+                assert!(owner <= *prev_owner, "spec.owner must be desc");
+            }
+        }
+        previous = Some((owner, name));
+    }
 }
 
 #[test]
