@@ -36,3 +36,25 @@
 - Если выбран родительский путь (например `metadata`), в `json|yaml` восстанавливается nested-объект из `metadata.*`
 - Отсутствующий выбранный путь -> `null` (`json|yaml`) или `-` (`table`)
 - `select` имеет приоритет над default summary и `--describe`
+
+## Aggregation
+
+- Aggregation задается в `select`: `count(*)`, `count(path)`, `sum(path)`, `min(path)`, `max(path)`, `avg(path)`.
+- В одном `select` нельзя смешивать path-проекции и агрегации.
+- Aggregation и `order by` не комбинируются.
+- `--describe` не поддерживается для aggregation-запросов.
+- Результат aggregation — один row (`items: 1`) с ключами вида `count(*)`, `sum(spec.replicas)`.
+
+Политика `null`/missing и типов:
+
+- `count(*)`: считает все строки после `where`.
+- `count(path)`: считает только non-null существующие значения.
+- `sum(path)` / `avg(path)`: принимают только `number` (non-null). Иначе ошибка.
+- `min(path)` / `max(path)`: принимают homogeneous тип (`bool` или `number` или `string`). Mixed types -> ошибка.
+
+Пустой набор:
+
+- `count(*) = 0`
+- `count(path) = 0`
+- `sum(path) = 0`
+- `avg/min/max = null`

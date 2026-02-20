@@ -299,3 +299,65 @@ fn e2e_select_for_crd_widget() {
         Some(&JsonValue::String("team-a".to_string()))
     );
 }
+
+#[test]
+fn e2e_json_aggregation_count_for_core_resource() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "select",
+        "count(*)",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let first = rows
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("must return one aggregation row");
+
+    let count = first
+        .get("count(*)")
+        .and_then(JsonValue::as_u64)
+        .expect("count(*) must be uint");
+    assert!(count >= 1, "expected at least one pod in demo-a namespace");
+}
+
+#[test]
+fn e2e_aggregation_sum_non_numeric_returns_error() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.namespace",
+        "==",
+        "demo-a",
+        "-o",
+        "json",
+        "select",
+        "sum(metadata.name)",
+    ]);
+
+    assert!(!output.status.success(), "sum(metadata.name) must fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr must be utf8");
+    assert!(stderr.contains("engine error:"));
+    assert!(stderr.contains("expects number"));
+}
