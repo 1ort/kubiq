@@ -134,6 +134,9 @@ fn select_clause_to_engine(clause: &parser::SelectClause) -> engine::EngineSelec
         parser::SelectClause::Aggregations(expressions) => engine::EngineSelection::Aggregations(
             expressions.iter().map(aggregation_to_engine).collect(),
         ),
+        parser::SelectClause::Mixed { .. } => {
+            unreachable!("mixed select clause must be rejected by parser validation")
+        }
     }
 }
 

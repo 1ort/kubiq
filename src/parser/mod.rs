@@ -46,6 +46,10 @@ pub enum SortDirection {
 pub enum SelectClause {
     Paths(Vec<String>),
     Aggregations(Vec<AggregationExpr>),
+    Mixed {
+        paths: Vec<String>,
+        aggregations: Vec<AggregationExpr>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,7 +86,11 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
 }
 
 fn validate_query_ast(ast: QueryAst) -> Result<QueryAst, String> {
-    if matches!(ast.select, Some(SelectClause::Aggregations(_))) && ast.order_by.is_some() {
+    if matches!(ast.select.as_ref(), Some(SelectClause::Mixed { .. })) {
+        return Err("cannot mix projection paths and aggregations in SELECT".to_string());
+    }
+    if matches!(ast.select.as_ref(), Some(SelectClause::Aggregations(_))) && ast.order_by.is_some()
+    {
         return Err("aggregation queries do not support ORDER BY".to_string());
     }
     Ok(ast)
@@ -249,7 +257,13 @@ fn classify_select_items(
     match (paths.is_empty(), aggregations.is_empty()) {
         (false, true) => Ok((input, SelectClause::Paths(paths))),
         (true, false) => Ok((input, SelectClause::Aggregations(aggregations))),
-        _ => Err(nom::Err::Failure(Error::new(input, ErrorKind::Verify))),
+        _ => Ok((
+            input,
+            SelectClause::Mixed {
+                paths,
+                aggregations,
+            },
+        )),
     }
 }
 
@@ -787,7 +801,7 @@ mod tests {
     fn rejects_mixed_path_and_aggregation_select() {
         let err = parse_query("where metadata.namespace == demo-a select metadata.name, count(*)")
             .expect_err("must reject mixed select");
-        assert_eq!(err, "invalid query syntax");
+        assert_eq!(err, "cannot mix projection paths and aggregations in SELECT");
     }
 
     #[test]
