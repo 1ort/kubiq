@@ -15,12 +15,6 @@
 - Что сделать: ввести engine-owned типы (`EnginePredicate`, `EngineOperator`), конвертировать AST -> QueryPlan на boundary.
 - Критерий готовности: `engine` не импортирует `crate::parser`; тесты `engine` используют только engine-типы.
 
-3. Исправить обработку значений с `'` в аргументах CLI
-- Где: `src/parser/mod.rs` (`normalize_arg`, `quoted_string_value`)
-- Проблема: аргументы с апострофом ломают синтаксис, escape-последовательности не поддерживаются.
-- Что сделать: добавить корректное экранирование/разбор quoted string (например `\'`) и тесты на такие входы.
-- Критерий готовности: запросы вида `where metadata.name == O'Reilly` корректно парсятся в string literal.
-
 ### P1 (средний приоритет)
 
 2. Убрать создание отдельного Tokio runtime на каждый `list`
@@ -62,3 +56,4 @@
 - Server-side filtering planner + pushdown подмножества `where` (`==`/`!=` для metadata/labels) с typed fallback diagnostics
 - Typed mapper ошибок K8s list/discovery без string-эвристик
 - Pushdown planner вынесен из CLI в `k8s::planner`
+- Исправлен парсинг string-литералов с `'` и escape-последовательностями в CLI query args/parser
