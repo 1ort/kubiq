@@ -164,9 +164,10 @@ fn sum_aggregation(
     path: &str,
     objects: &[DynamicObject],
 ) -> Result<Value, EngineError> {
-    let mut total = 0.0f64;
+    let mut total_i128: i128 = 0;
+    let mut total_f64: f64 = 0.0;
+    let mut use_float = false;
     let mut has_value = false;
-    let mut all_integers = true;
 
     for object in objects {
         let Some(value) = object.get(path) else {
@@ -176,31 +177,42 @@ fn sum_aggregation(
             continue;
         }
 
-        let Some(number) = value.as_f64() else {
+        let Some(number) = numeric_from_json(value) else {
             return Err(non_numeric_aggregation_error("sum", path, value));
         };
 
-        if !is_integer_value(value) {
-            all_integers = false;
-        }
-
         has_value = true;
-        total += number;
+        match number {
+            NumericValue::Int(value) if !use_float => {
+                total_i128 = total_i128.checked_add(value).ok_or_else(|| {
+                    EngineError::InvalidAggregation {
+                        function: "sum".to_string(),
+                        path: path.to_string(),
+                        expected: "representable integer sum",
+                        actual: "overflow".to_string(),
+                    }
+                })?;
+            }
+            NumericValue::Int(value) => total_f64 += value as f64,
+            NumericValue::Float(value) => {
+                if !use_float {
+                    total_f64 = total_i128 as f64;
+                    use_float = true;
+                }
+                total_f64 += value;
+            }
+        }
     }
 
     if !has_value {
         return Ok(Value::from(0));
     }
 
-    if all_integers
-        && total.fract() == 0.0
-        && total >= i64::MIN as f64
-        && total <= i64::MAX as f64
-    {
-        return Ok(Value::from(total as i64));
+    if !use_float {
+        return integer_to_json_number("sum", path, total_i128);
     }
 
-    serde_json::Number::from_f64(total)
+    serde_json::Number::from_f64(total_f64)
         .map(Value::Number)
         .ok_or_else(|| EngineError::InvalidAggregation {
             function: "sum".to_string(),
@@ -214,7 +226,9 @@ fn avg_aggregation(
     path: &str,
     objects: &[DynamicObject],
 ) -> Result<Value, EngineError> {
-    let mut total = 0.0f64;
+    let mut sum_i128: i128 = 0;
+    let mut sum_f64: f64 = 0.0;
+    let mut use_float = false;
     let mut count = 0usize;
 
     for object in objects {
@@ -225,10 +239,29 @@ fn avg_aggregation(
             continue;
         }
 
-        let Some(number) = value.as_f64() else {
+        let Some(number) = numeric_from_json(value) else {
             return Err(non_numeric_aggregation_error("avg", path, value));
         };
-        total += number;
+        match number {
+            NumericValue::Int(value) if !use_float => {
+                sum_i128 = sum_i128.checked_add(value).ok_or_else(|| {
+                    EngineError::InvalidAggregation {
+                        function: "avg".to_string(),
+                        path: path.to_string(),
+                        expected: "representable integer sum",
+                        actual: "overflow".to_string(),
+                    }
+                })?;
+            }
+            NumericValue::Int(value) => sum_f64 += value as f64,
+            NumericValue::Float(value) => {
+                if !use_float {
+                    sum_f64 = sum_i128 as f64;
+                    use_float = true;
+                }
+                sum_f64 += value;
+            }
+        }
         count += 1;
     }
 
@@ -236,7 +269,11 @@ fn avg_aggregation(
         return Ok(Value::Null);
     }
 
-    let average = total / count as f64;
+    if !use_float {
+        sum_f64 = sum_i128 as f64;
+    }
+
+    let average = sum_f64 / count as f64;
     serde_json::Number::from_f64(average)
         .map(Value::Number)
         .ok_or_else(|| EngineError::InvalidAggregation {
@@ -303,15 +340,7 @@ fn compare_same_type_values(
     match (left, right) {
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
         (Value::String(left), Value::String(right)) => Ok(left.cmp(right)),
-        (Value::Number(left), Value::Number(right)) => {
-            let Some(left) = left.as_f64() else {
-                return Ok(Ordering::Equal);
-            };
-            let Some(right) = right.as_f64() else {
-                return Ok(Ordering::Equal);
-            };
-            Ok(left.partial_cmp(&right).unwrap_or(Ordering::Equal))
-        }
+        (Value::Number(left), Value::Number(right)) => compare_number_values(left, right),
         _ => Err(EngineError::InvalidAggregation {
             function: "min/max".to_string(),
             path: "<internal>".to_string(),
@@ -341,11 +370,84 @@ fn value_type_name(value: &Value) -> &'static str {
     }
 }
 
-fn is_integer_value(value: &Value) -> bool {
-    value
-        .as_i64()
-        .is_some()
-        || value.as_u64().is_some()
+enum NumericValue {
+    Int(i128),
+    Float(f64),
+}
+
+fn numeric_from_json(value: &Value) -> Option<NumericValue> {
+    let number = value.as_number()?;
+    if let Some(value) = number.as_i64() {
+        return Some(NumericValue::Int(i128::from(value)));
+    }
+    if let Some(value) = number.as_u64() {
+        return Some(NumericValue::Int(i128::from(value)));
+    }
+    number.as_f64().map(NumericValue::Float)
+}
+
+fn integer_to_json_number(
+    function: &str,
+    path: &str,
+    value: i128,
+) -> Result<Value, EngineError> {
+    if value >= i128::from(i64::MIN) && value <= i128::from(i64::MAX) {
+        return Ok(Value::from(value as i64));
+    }
+    if value >= 0 && value <= i128::from(u64::MAX) {
+        return Ok(Value::from(value as u64));
+    }
+    Err(EngineError::InvalidAggregation {
+        function: function.to_string(),
+        path: path.to_string(),
+        expected: "representable JSON integer",
+        actual: "out of range".to_string(),
+    })
+}
+
+fn compare_number_values(
+    left: &serde_json::Number,
+    right: &serde_json::Number,
+) -> Result<Ordering, EngineError> {
+    if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
+        return Ok(left.cmp(&right));
+    }
+    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+        return Ok(left.cmp(&right));
+    }
+    if let (Some(left), Some(right)) = (left.as_i64(), right.as_u64()) {
+        return Ok(if left < 0 {
+            Ordering::Less
+        } else {
+            (left as u64).cmp(&right)
+        });
+    }
+    if let (Some(left), Some(right)) = (left.as_u64(), right.as_i64()) {
+        return Ok(if right < 0 {
+            Ordering::Greater
+        } else {
+            left.cmp(&(right as u64))
+        });
+    }
+
+    let Some(left) = left.as_f64() else {
+        return Err(EngineError::InvalidAggregation {
+            function: "min/max".to_string(),
+            path: "<internal>".to_string(),
+            expected: "finite numeric value",
+            actual: "non-finite".to_string(),
+        });
+    };
+    let Some(right) = right.as_f64() else {
+        return Err(EngineError::InvalidAggregation {
+            function: "min/max".to_string(),
+            path: "<internal>".to_string(),
+            expected: "finite numeric value",
+            actual: "non-finite".to_string(),
+        });
+    };
+
+    Ok(left.partial_cmp(&right).unwrap_or(Ordering::Equal))
 }
 
 fn non_numeric_aggregation_error(
@@ -892,6 +994,103 @@ mod tests {
 
         let err = aggregate(&plan, &objects).expect_err("must fail");
         assert!(err.to_string().contains("cannot compare mixed types"));
+    }
+
+    #[test]
+    fn aggregate_count_path_ignores_missing_and_null() {
+        let objects = vec![
+            object(&[("spec.replicas", Value::from(3))]),
+            object(&[("spec.replicas", Value::Null)]),
+            object(&[]),
+        ];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![EngineAggregationExpr {
+                function: EngineAggregationFunction::Count,
+                path: Some("spec.replicas".to_string()),
+            }])),
+            sort_keys: None,
+        };
+
+        let rows = aggregate(&plan, &objects).expect("must aggregate");
+        let row = &rows[0].fields;
+        assert_eq!(row.get("count(spec.replicas)"), Some(&Value::from(1)));
+    }
+
+    #[test]
+    fn aggregate_sum_keeps_large_integer_precision() {
+        let objects = vec![
+            object(&[("spec.value", Value::from(9_007_199_254_740_993u64))]),
+            object(&[("spec.value", Value::from(2u64))]),
+        ];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![EngineAggregationExpr {
+                function: EngineAggregationFunction::Sum,
+                path: Some("spec.value".to_string()),
+            }])),
+            sort_keys: None,
+        };
+
+        let rows = aggregate(&plan, &objects).expect("must aggregate");
+        let row = &rows[0].fields;
+        assert_eq!(
+            row.get("sum(spec.value)"),
+            Some(&Value::from(9_007_199_254_740_995u64))
+        );
+    }
+
+    #[test]
+    fn aggregate_min_max_compare_large_integers_exactly() {
+        let objects = vec![
+            object(&[("spec.value", Value::from(9_007_199_254_740_993u64))]),
+            object(&[("spec.value", Value::from(9_007_199_254_740_992u64))]),
+        ];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Min,
+                    path: Some("spec.value".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Max,
+                    path: Some("spec.value".to_string()),
+                },
+            ])),
+            sort_keys: None,
+        };
+
+        let rows = aggregate(&plan, &objects).expect("must aggregate");
+        let row = &rows[0].fields;
+        assert_eq!(
+            row.get("min(spec.value)"),
+            Some(&Value::from(9_007_199_254_740_992u64))
+        );
+        assert_eq!(
+            row.get("max(spec.value)"),
+            Some(&Value::from(9_007_199_254_740_993u64))
+        );
+    }
+
+    #[test]
+    fn aggregate_avg_supports_float_values() {
+        let objects = vec![
+            object(&[("spec.value", Value::from(1.5))]),
+            object(&[("spec.value", Value::from(2.5))]),
+        ];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![EngineAggregationExpr {
+                function: EngineAggregationFunction::Avg,
+                path: Some("spec.value".to_string()),
+            }])),
+            sort_keys: None,
+        };
+
+        let rows = aggregate(&plan, &objects).expect("must aggregate");
+        let row = &rows[0].fields;
+        assert_eq!(row.get("avg(spec.value)"), Some(&Value::from(2.0)));
     }
 
     fn object(entries: &[(&str, Value)]) -> DynamicObject {
