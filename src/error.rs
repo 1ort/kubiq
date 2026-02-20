@@ -49,6 +49,12 @@ pub enum K8sError {
         #[source]
         source: BoxError,
     },
+    #[error("server rejected selectors for resource '{resource}': {source}")]
+    SelectorRejected {
+        resource: String,
+        #[source]
+        source: BoxError,
+    },
     #[error("pagination for resource '{resource}' exceeded max pages ({max_pages})")]
     PaginationExceeded { resource: String, max_pages: usize },
     #[error("pagination for resource '{resource}' got stuck on continue token '{token}'")]
@@ -117,6 +123,9 @@ fn k8s_tip(error: &K8sError) -> &'static str {
         }
         K8sError::ApiUnreachable { .. } => {
             "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info"
+        }
+        K8sError::SelectorRejected { .. } => {
+            "Tip: API server rejected selectors; kubiq can retry without selectors and continue with client-side filtering."
         }
         _ => "Tip: verify cluster access with `kubectl get ns` and then retry.",
     }

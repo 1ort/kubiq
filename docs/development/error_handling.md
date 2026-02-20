@@ -16,11 +16,14 @@
   - `ApiUnreachable`
   - `ResourceNotFound`
   - `ListFailed`
+  - `SelectorRejected`
   - `PaginationExceeded`
   - `PaginationStuck`
 - Output layer использует typed `OutputError` (`JsonSerialize`, `YamlSerialize`)
 - Реализация typed errors построена на `thiserror`
 - Внутренние причины ошибок сохраняются через `source` (error chain)
+- Классификация list/discovery ошибок делается typed-ветвлением по `kube::Error` (`Api` status, transport variants), без `to_string().contains(...)`
+- При rejected selectors используется typed fallback: повторный list без selectors + diagnostic в stderr
 
 Требование к сообщениям:
 

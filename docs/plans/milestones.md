@@ -12,7 +12,7 @@
 
 ## Next milestones toward v1.0.0
 
-10. Query completeness baseline (`sort`, `aggregation`, full server-side filtering)
+10. Query completeness baseline (`sort`, `aggregation`, best-effort server-side filtering pushdown)
 11. Streaming and watch
 12. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache)
 13. Query language v2 (`OR`, parentheses, `IN`, extended string operators)

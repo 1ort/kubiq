@@ -11,7 +11,7 @@
 Состав:
 - `sort` / `order by`
 - `aggregation` (минимум: `count`, `sum`, `min`, `max`, `avg`)
-- Полный server-side filtering для поддерживаемых выражений `where`
+- Best-effort server-side filtering pushdown для технически поддерживаемого подмножества `where` (с гарантированной client-side корректностью)
 
 Definition of Done:
 - DSL/grammar/AST/engine синхронизированы
@@ -138,4 +138,3 @@ Definition of Done:
 - Documentation: архитектура, DSL, troubleshooting, migration notes
 - Developer Experience: линтеры, форматтеры, reproducible local environment
 - Product quality: управление обратной совместимостью и change communication
-
