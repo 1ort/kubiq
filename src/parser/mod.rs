@@ -13,7 +13,7 @@ use serde_json::Value;
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryAst {
     pub predicates: Vec<Predicate>,
-    pub select_paths: Option<Vec<String>>,
+    pub select: Option<SelectClause>,
     pub order_by: Option<Vec<SortKey>>,
 }
 
@@ -42,6 +42,27 @@ pub enum SortDirection {
     Desc,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectClause {
+    Paths(Vec<String>),
+    Aggregations(Vec<AggregationExpr>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregationExpr {
+    pub function: AggregationFunction,
+    pub path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AggregationFunction {
+    Count,
+    Sum,
+    Min,
+    Max,
+    Avg,
+}
+
 pub fn parse_query(input: &str) -> Result<QueryAst, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -52,12 +73,19 @@ pub fn parse_query(input: &str) -> Result<QueryAst, String> {
     }
 
     match all_consuming(delimited(multispace0, query_ast, multispace0)).parse(trimmed) {
-        Ok((_, ast)) => Ok(ast),
+        Ok((_, ast)) => validate_query_ast(ast),
         Err(err) if is_invalid_escape_error(&err) => {
             Err("invalid escape sequence in quoted string".to_string())
         }
         Err(_) => Err("invalid query syntax".to_string()),
     }
+}
+
+fn validate_query_ast(ast: QueryAst) -> Result<QueryAst, String> {
+    if matches!(ast.select, Some(SelectClause::Aggregations(_))) && ast.order_by.is_some() {
+        return Err("aggregation queries do not support ORDER BY".to_string());
+    }
+    Ok(ast)
 }
 
 pub fn parse_query_args(args: &[String]) -> Result<QueryAst, String> {
@@ -106,16 +134,16 @@ fn query_ast(input: &str) -> IResult<&str, QueryAst> {
     let (input, predicates) = where_clause(input)?;
     let (input, clauses) = many0(preceded(multispace1, query_suffix_clause)).parse(input)?;
 
-    let mut select_paths = None;
+    let mut select = None;
     let mut order_by = None;
 
     for clause in clauses {
         match clause {
-            QuerySuffixClause::Select(paths) => {
-                if select_paths.is_some() {
+            QuerySuffixClause::Select(clause) => {
+                if select.is_some() {
                     return Err(nom::Err::Error(Error::new(input, ErrorKind::Tag)));
                 }
-                select_paths = Some(paths);
+                select = Some(clause);
             }
             QuerySuffixClause::OrderBy(keys) => {
                 if order_by.is_some() {
@@ -130,7 +158,7 @@ fn query_ast(input: &str) -> IResult<&str, QueryAst> {
         input,
         QueryAst {
             predicates,
-            select_paths,
+            select,
             order_by,
         },
     ))
@@ -138,7 +166,7 @@ fn query_ast(input: &str) -> IResult<&str, QueryAst> {
 
 #[derive(Clone, Debug, PartialEq)]
 enum QuerySuffixClause {
-    Select(Vec<String>),
+    Select(SelectClause),
     OrderBy(Vec<SortKey>),
 }
 
@@ -180,12 +208,49 @@ fn operator(input: &str) -> IResult<&str, Operator> {
     .parse(input)
 }
 
-fn select_clause(input: &str) -> IResult<&str, Vec<String>> {
-    preceded(
+fn select_clause(input: &str) -> IResult<&str, SelectClause> {
+    let (input, items) = preceded(
         terminated(tag_no_case("select"), multispace1),
-        separated_list1(select_separator, path),
+        separated_list1(select_separator, select_item),
     )
+    .parse(input)?;
+
+    classify_select_items(input, items)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SelectItem {
+    Path(String),
+    Aggregation(AggregationExpr),
+}
+
+fn select_item(input: &str) -> IResult<&str, SelectItem> {
+    alt((
+        map(aggregation_expr, SelectItem::Aggregation),
+        map(path, SelectItem::Path),
+    ))
     .parse(input)
+}
+
+fn classify_select_items(
+    input: &str,
+    items: Vec<SelectItem>,
+) -> IResult<&str, SelectClause> {
+    let mut paths = Vec::new();
+    let mut aggregations = Vec::new();
+
+    for item in items {
+        match item {
+            SelectItem::Path(path) => paths.push(path),
+            SelectItem::Aggregation(aggregation) => aggregations.push(aggregation),
+        }
+    }
+
+    match (paths.is_empty(), aggregations.is_empty()) {
+        (false, true) => Ok((input, SelectClause::Paths(paths))),
+        (true, false) => Ok((input, SelectClause::Aggregations(aggregations))),
+        _ => Err(nom::Err::Failure(Error::new(input, ErrorKind::Verify))),
+    }
 }
 
 fn select_separator(input: &str) -> IResult<&str, ()> {
@@ -255,6 +320,44 @@ fn sort_direction(input: &str) -> IResult<&str, SortDirection> {
         value(SortDirection::Desc, tag_no_case("desc")),
     ))
     .parse(input)
+}
+
+fn aggregation_expr(input: &str) -> IResult<&str, AggregationExpr> {
+    let (input, function) = aggregation_function(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, path) = aggregation_arg(input, function.clone())?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char(')')(input)?;
+
+    Ok((input, AggregationExpr { function, path }))
+}
+
+fn aggregation_function(input: &str) -> IResult<&str, AggregationFunction> {
+    alt((
+        value(AggregationFunction::Count, tag_no_case("count")),
+        value(AggregationFunction::Sum, tag_no_case("sum")),
+        value(AggregationFunction::Min, tag_no_case("min")),
+        value(AggregationFunction::Max, tag_no_case("max")),
+        value(AggregationFunction::Avg, tag_no_case("avg")),
+    ))
+    .parse(input)
+}
+
+fn aggregation_arg(
+    input: &str,
+    function: AggregationFunction,
+) -> IResult<&str, Option<String>> {
+    if matches!(function, AggregationFunction::Count) {
+        alt((
+            value(None, char('*')),
+            map(path, Some),
+        ))
+        .parse(input)
+    } else {
+        map(path, Some).parse(input)
+    }
 }
 
 fn path(input: &str) -> IResult<&str, String> {
@@ -383,7 +486,9 @@ fn parse_scalar_value(token: &str) -> Value {
 mod tests {
     use serde_json::Value;
 
-    use super::{Operator, SortDirection, parse_query, parse_query_args};
+    use super::{
+        AggregationFunction, Operator, SelectClause, SortDirection, parse_query, parse_query_args,
+    };
 
     #[test]
     fn parses_and_chain() {
@@ -393,7 +498,7 @@ mod tests {
         assert_eq!(ast.predicates.len(), 2);
         assert_eq!(ast.predicates[0].op, Operator::Eq);
         assert_eq!(ast.predicates[1].op, Operator::Ne);
-        assert_eq!(ast.select_paths, None);
+        assert_eq!(ast.select, None);
         assert_eq!(ast.order_by, None);
     }
 
@@ -402,7 +507,7 @@ mod tests {
         let ast = parse_query("where metadata.namespace == default and spec.nodeName != worker-1")
             .expect("must parse valid query");
         assert_eq!(ast.predicates.len(), 2);
-        assert_eq!(ast.select_paths, None);
+        assert_eq!(ast.select, None);
     }
 
     #[test]
@@ -414,7 +519,7 @@ mod tests {
             ast.predicates[0].value,
             Value::String("a AND b".to_string())
         );
-        assert_eq!(ast.select_paths, None);
+        assert_eq!(ast.select, None);
     }
 
     #[test]
@@ -424,7 +529,7 @@ mod tests {
 
         assert_eq!(ast.predicates[0].value, Value::from(2));
         assert_eq!(ast.predicates[1].value, Value::Bool(true));
-        assert_eq!(ast.select_paths, None);
+        assert_eq!(ast.select, None);
     }
 
     #[test]
@@ -460,7 +565,7 @@ mod tests {
         let ast = parse_query_args(&args).expect("must parse valid args");
         assert_eq!(ast.predicates.len(), 1);
         assert_eq!(ast.predicates[0].value, Value::String("demo-a".to_string()));
-        assert_eq!(ast.select_paths, None);
+        assert_eq!(ast.select, None);
     }
 
     #[test]
@@ -485,11 +590,11 @@ mod tests {
         )
         .expect("must parse valid query");
         assert_eq!(
-            ast.select_paths,
-            Some(vec![
+            ast.select,
+            Some(SelectClause::Paths(vec![
                 "metadata.name".to_string(),
                 "metadata.namespace".to_string()
-            ])
+            ]))
         );
     }
 
@@ -505,11 +610,11 @@ mod tests {
         ];
         let ast = parse_query_args(&args).expect("must parse valid args");
         assert_eq!(
-            ast.select_paths,
-            Some(vec![
+            ast.select,
+            Some(SelectClause::Paths(vec![
                 "metadata.name".to_string(),
                 "metadata.namespace".to_string()
-            ])
+            ]))
         );
     }
 
@@ -524,7 +629,10 @@ mod tests {
             "metadata.name".to_string(),
         ];
         let ast = parse_query_args(&args).expect("must parse valid args");
-        assert_eq!(ast.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            ast.select,
+            Some(SelectClause::Paths(vec!["metadata.name".to_string()]))
+        );
     }
 
     #[test]
@@ -534,11 +642,11 @@ mod tests {
         )
         .expect("must parse valid query");
         assert_eq!(
-            ast.select_paths,
-            Some(vec![
+            ast.select,
+            Some(SelectClause::Paths(vec![
                 "metadata.name".to_string(),
                 "metadata.namespace".to_string()
-            ])
+            ]))
         );
     }
 
@@ -575,7 +683,10 @@ mod tests {
         )
         .expect("must parse valid query");
 
-        assert_eq!(ast.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            ast.select,
+            Some(SelectClause::Paths(vec!["metadata.name".to_string()]))
+        );
         assert_eq!(
             ast.order_by.expect("must parse order")[0].direction,
             SortDirection::Desc
@@ -589,7 +700,10 @@ mod tests {
         )
         .expect("must parse valid query");
 
-        assert_eq!(ast.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            ast.select,
+            Some(SelectClause::Paths(vec!["metadata.name".to_string()]))
+        );
         assert_eq!(
             ast.order_by.expect("must parse order")[0].direction,
             SortDirection::Desc
@@ -603,11 +717,11 @@ mod tests {
                 .expect("must parse valid query");
 
         assert_eq!(
-            ast.select_paths,
-            Some(vec![
+            ast.select,
+            Some(SelectClause::Paths(vec![
                 "metadata.name".to_string(),
                 "order.status".to_string(),
-            ])
+            ]))
         );
         assert_eq!(ast.order_by, None);
     }
@@ -619,8 +733,11 @@ mod tests {
                 .expect("must parse valid query");
 
         assert_eq!(
-            ast.select_paths,
-            Some(vec!["metadata.name".to_string(), "select.path".to_string(),])
+            ast.select,
+            Some(SelectClause::Paths(vec![
+                "metadata.name".to_string(),
+                "select.path".to_string(),
+            ]))
         );
         assert_eq!(ast.order_by, None);
     }
@@ -636,6 +753,50 @@ mod tests {
     fn reports_trailing_escape_sequence() {
         let err = parse_query("where metadata.name == 'bad\\").expect_err("query must fail");
         assert_eq!(err, "invalid escape sequence in quoted string");
+    }
+
+    #[test]
+    fn parses_aggregation_select_count_star() {
+        let ast = parse_query("where metadata.namespace == demo-a select count(*)")
+            .expect("must parse aggregate query");
+        let Some(SelectClause::Aggregations(expressions)) = ast.select else {
+            panic!("expected aggregation select");
+        };
+        assert_eq!(expressions.len(), 1);
+        assert_eq!(expressions[0].function, AggregationFunction::Count);
+        assert_eq!(expressions[0].path, None);
+    }
+
+    #[test]
+    fn parses_multiple_aggregations() {
+        let ast = parse_query(
+            "where metadata.namespace == demo-a select sum(spec.replicas), avg(spec.replicas), count(spec.replicas)",
+        )
+        .expect("must parse aggregate query");
+        let Some(SelectClause::Aggregations(expressions)) = ast.select else {
+            panic!("expected aggregation select");
+        };
+        assert_eq!(expressions.len(), 3);
+        assert_eq!(expressions[0].function, AggregationFunction::Sum);
+        assert_eq!(expressions[0].path.as_deref(), Some("spec.replicas"));
+        assert_eq!(expressions[1].function, AggregationFunction::Avg);
+        assert_eq!(expressions[2].function, AggregationFunction::Count);
+    }
+
+    #[test]
+    fn rejects_mixed_path_and_aggregation_select() {
+        let err = parse_query("where metadata.namespace == demo-a select metadata.name, count(*)")
+            .expect_err("must reject mixed select");
+        assert_eq!(err, "invalid query syntax");
+    }
+
+    #[test]
+    fn rejects_order_by_with_aggregation_select() {
+        let err = parse_query(
+            "where metadata.namespace == demo-a select count(*) order by metadata.name",
+        )
+        .expect_err("must reject order by with aggregation");
+        assert_eq!(err, "aggregation queries do not support ORDER BY");
     }
 
     #[test]
@@ -660,11 +821,11 @@ mod tests {
         .expect("must parse valid query");
 
         assert_eq!(
-            ast.select_paths,
-            Some(vec![
+            ast.select,
+            Some(SelectClause::Paths(vec![
                 "metadata.name".to_string(),
                 "order.status".to_string(),
-            ])
+            ]))
         );
         assert_eq!(
             ast.order_by.expect("must parse order")[0].direction,
