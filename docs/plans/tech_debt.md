@@ -9,11 +9,7 @@
 
 ### P0 (высокий приоритет)
 
-1. Развязать `engine` от `parser` типов (нарушение core invariant)
-- Где: `src/engine/mod.rs`
-- Проблема: `QueryPlan` хранит `parser::Predicate` и `parser::Operator`, из-за чего engine зависит от parser.
-- Что сделать: ввести engine-owned типы (`EnginePredicate`, `EngineOperator`), конвертировать AST -> QueryPlan на boundary.
-- Критерий готовности: `engine` не импортирует `crate::parser`; тесты `engine` используют только engine-типы.
+Открытых P0 задач нет.
 
 ### P1 (средний приоритет)
 
@@ -57,3 +53,4 @@
 - Typed mapper ошибок K8s list/discovery без string-эвристик
 - Pushdown planner вынесен из CLI в `k8s::planner`
 - Исправлен парсинг string-литералов с `'` и escape-последовательностями в CLI query args/parser
+- `engine` отвязан от `parser` типов: `engine::QueryPlan` хранит engine-owned типы, AST конвертируется на CLI boundary
