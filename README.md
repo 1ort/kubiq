@@ -15,11 +15,12 @@ Implemented:
 - `order by` sorting with multi-key support and `asc|desc`
 - Best-effort server-side filter pushdown for technically feasible subset of `where` (`==`/`!=` on `metadata.name`, `metadata.namespace`, `metadata.labels.*`)
 - `select` projection
+- Global aggregations in `select` (`count`, `sum`, `min`, `max`, `avg`) without `group by`
 - Output formats: `table`, `json`, `yaml`
 - Default summary output (`name` only)
 - Full output via `--describe`
 - End-to-end tests on Minikube
-- Typed error hierarchy with actionable CLI tips (`CliError`/`K8sError`/`OutputError`)
+- Typed error hierarchy with actionable CLI tips (`CliError`/`K8sError`/`EngineError`/`OutputError`)
 
 ## Features
 
@@ -52,7 +53,7 @@ cargo run -- <args>
 ## Usage
 
 ```bash
-kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [order by <keys>] [select <paths>]
+kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [order by <keys>] [select <paths>|<aggregations>]
 ```
 
 Options:
@@ -82,6 +83,18 @@ Semantics:
 - Supports comma or whitespace-separated paths
 - Parent path selection reconstructs nested output (`select metadata`)
 
+### Aggregation
+
+- Supported aggregate expressions in `select`:
+  - `count(*)`
+  - `count(path)`
+  - `sum(path)`, `min(path)`, `max(path)`, `avg(path)`
+- Aggregation returns a single aggregated row
+- In v0.2 baseline:
+  - `order by` is not supported with aggregation
+  - `--describe` is not supported with aggregation
+  - projection paths and aggregations cannot be mixed in one `select`
+
 ### Order by
 
 - Sorts filtered objects before output
@@ -108,6 +121,10 @@ kubiq -o yaml -d pods where metadata.name == worker-a
 
 # CRD example
 kubiq -o json widgets where spec.enabled == true select metadata.name,spec.owner
+
+# Aggregation examples
+kubiq -o json pods where metadata.namespace == demo-a select count(*)
+kubiq -o json pods where metadata.namespace == demo-a select sum(metadata.generation),avg(metadata.generation)
 ```
 
 ## Local E2E Test Cluster (Minikube)
@@ -145,7 +162,7 @@ cargo run -- --help
 
 ## Architecture (High Level)
 
-`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> Sort -> Projection -> Output`
+`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> (Aggregate | Sort) -> Projection -> Output`
 
 ## Project Layout
 
