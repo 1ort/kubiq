@@ -17,6 +17,7 @@ kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [ord
 
 - `--output`, `-o`: `table` (default), `json`, `yaml`
 - `--describe`, `-d`: полный вывод объекта
+- `--no-pushdown-warnings`: отключить предупреждения pushdown/fallback в `stderr`
 - `--help`, `-h`: показать справку
 - `--version`, `-V`: показать версию
 - `--`: завершить разбор флагов и трактовать остаток как positional аргументы
@@ -35,6 +36,7 @@ kubiq [--output table|json|yaml] [--describe] <resource> where <predicates> [ord
 - Для server-side filtering CLI печатает предупреждения в `stderr`, если:
   - часть предикатов не может быть pushdown'нута
   - API отверг selectors и выполнен fallback на client-side filtering
+- Предупреждения pushdown можно отключить флагом `--no-pushdown-warnings`
 
 ## Примеры
 

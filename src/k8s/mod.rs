@@ -117,7 +117,7 @@ async fn list_pages(
         let mut page = api
             .list(&params)
             .await
-            .map_err(|source| map_list_error(resource, source))?;
+            .map_err(|source| map_list_error(resource, options.has_selectors(), source))?;
 
         all_items.append(&mut page.items);
         continue_token =
@@ -155,19 +155,44 @@ enum ListErrorClass {
     Other,
 }
 
-fn classify_list_error(source: &kube::Error) -> ListErrorClass {
+fn classify_list_error(
+    source: &kube::Error,
+    had_selectors: bool,
+) -> ListErrorClass {
     match source {
-        kube::Error::Api(error) if error.code == 400 => ListErrorClass::SelectorRejected,
+        kube::Error::Api(error) if had_selectors && is_selector_rejection(error) => {
+            ListErrorClass::SelectorRejected
+        }
         kube::Error::Service(_) | kube::Error::HyperError(_) => ListErrorClass::ApiUnreachable,
         _ => ListErrorClass::Other,
     }
 }
 
+fn is_selector_rejection(error: &kube::error::ErrorResponse) -> bool {
+    if error.code != 400 {
+        return false;
+    }
+
+    let reason = error.reason.to_ascii_lowercase();
+    let message = error.message.to_ascii_lowercase();
+    const SELECTOR_MARKERS: [&str; 4] = [
+        "field selector",
+        "label selector",
+        "not a known field selector",
+        "field label not supported",
+    ];
+
+    SELECTOR_MARKERS
+        .iter()
+        .any(|marker| reason.contains(marker) || message.contains(marker))
+}
+
 fn map_list_error(
     resource: &str,
+    had_selectors: bool,
     source: kube::Error,
 ) -> K8sError {
-    match classify_list_error(&source) {
+    match classify_list_error(&source, had_selectors) {
         ListErrorClass::SelectorRejected => K8sError::SelectorRejected {
             resource: resource.to_string(),
             source: boxed_error(source),
@@ -250,7 +275,7 @@ async fn resolve_api_resource(
 }
 
 fn map_discovery_error(source: kube::Error) -> K8sError {
-    match classify_list_error(&source) {
+    match classify_list_error(&source, false) {
         ListErrorClass::ApiUnreachable => K8sError::ApiUnreachable {
             stage: "discovery",
             source: boxed_error(source),
@@ -459,15 +484,40 @@ mod tests {
             code: 400,
         });
         assert_eq!(
-            classify_list_error(&error),
+            classify_list_error(&error, true),
             ListErrorClass::SelectorRejected
         );
     }
 
     #[test]
+    fn classifies_non_selector_bad_request_as_other() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "invalid request body".to_string(),
+            reason: "BadRequest".to_string(),
+            code: 400,
+        });
+        assert_eq!(classify_list_error(&error, true), ListErrorClass::Other);
+    }
+
+    #[test]
+    fn classifies_selector_bad_request_as_other_without_selectors() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "field selector not supported".to_string(),
+            reason: "BadRequest".to_string(),
+            code: 400,
+        });
+        assert_eq!(classify_list_error(&error, false), ListErrorClass::Other);
+    }
+
+    #[test]
     fn classifies_service_error_as_api_unreachable() {
         let error = kube::Error::Service(std::io::Error::other("connect").into());
-        assert_eq!(classify_list_error(&error), ListErrorClass::ApiUnreachable);
+        assert_eq!(
+            classify_list_error(&error, false),
+            ListErrorClass::ApiUnreachable
+        );
     }
 
     #[test]
@@ -478,7 +528,7 @@ mod tests {
             reason: "Forbidden".to_string(),
             code: 403,
         });
-        assert_eq!(classify_list_error(&error), ListErrorClass::Other);
+        assert_eq!(classify_list_error(&error, false), ListErrorClass::Other);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 В релиз входят 3 фичи:
 1. `order by` / sorting
 2. `aggregation` (`count`, `sum`, `min`, `max`, `avg`)
-3. Full server-side filtering для поддерживаемых выражений `where`
+3. Best-effort server-side filtering pushdown для поддерживаемых выражений `where`
 
 ## Delivery policy
 
@@ -62,7 +62,7 @@
 - Все 5 агрегаторов работают предсказуемо.
 - Ошибки агрегирования типизированы и диагностичны.
 
-## Epic 3 - Full server-side filtering
+## Epic 3 - Best-effort server-side filtering pushdown
 
 Рекомендуемая ветка: `feature/full-server-side-filtering`
 
@@ -71,7 +71,7 @@
 - Вынести `where -> ListQueryOptions` из `cli` в отдельный planner в `k8s`.
 - Подготовить расширяемую модель pushdown capability.
 
-2. Selector support expansion
+2. Selector support expansion (technically feasible subset)
 - Расширить pushdown beyond current safe subset.
 - Явно разделить: полностью pushable, частично pushable, непушабельные условия.
 - Гарантировать корректность через client-side post-filter (без ложноположительных результатов).
@@ -86,7 +86,7 @@
 - Edge-кейсы: unsupported field selector, invalid label key/value, mixed pushable/non-pushable predicates.
 
 ### Definition of Done
-- Максимально возможный pushdown без потери корректности результата.
+- Реализован best-effort pushdown (только технически поддерживаемое подмножество) без потери корректности результата.
 - Поведение fallback прозрачно и проверяемо тестами.
 
 ## Common technical tasks (выполняются параллельно)
@@ -98,7 +98,7 @@
 ## Suggested implementation order
 
 1. Epic 1 (`sorting`) - низкий риск, закрывает большой UX gap.
-2. Epic 3 (`full server-side filtering`) - повышает производительность и точность operator UX.
+2. Epic 3 (`best-effort server-side filtering pushdown`) - повышает производительность и точность operator UX.
 3. Epic 2 (`aggregation`) - наиболее высокая сложность семантики и output-контракта.
 
 ## Release checklist for v0.2.0
@@ -108,4 +108,3 @@
 3. Обновлены: `README.md`, `docs/product/cli_spec.md`, `docs/query_language/*`, `docs/development/testing.md`, `docs/development/error_handling.md`.
 4. Обновлены: `docs/plans/milestones.md`, `docs/plans/roadmap_v1.md`, `docs/plans/tech_debt.md`.
 5. Подготовлены release notes для `v0.2.0`.
-

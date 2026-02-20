@@ -26,6 +26,9 @@ struct CliArgs {
     #[arg(short = 'd', long = "describe")]
     describe: bool,
 
+    #[arg(long = "no-pushdown-warnings")]
+    no_pushdown_warnings: bool,
+
     #[arg(value_name = "resource")]
     resource: String,
 
@@ -41,13 +44,17 @@ pub fn run() -> Result<(), CliError> {
 
     let plan = engine::build_plan(ast);
     let pushdown_plan = k8s::planner::plan_pushdown(&plan.predicates);
-    for diagnostic in &pushdown_plan.diagnostics {
-        eprintln!("{}", format_planner_diagnostic(diagnostic));
+    if !args.no_pushdown_warnings {
+        for diagnostic in &pushdown_plan.diagnostics {
+            eprintln!("{}", format_planner_diagnostic(diagnostic));
+        }
     }
 
     let list_result = k8s::list(&args.resource, &pushdown_plan.options).map_err(CliError::K8s)?;
-    for diagnostic in &list_result.diagnostics {
-        eprintln!("{}", format_k8s_diagnostic(diagnostic));
+    if !args.no_pushdown_warnings {
+        for diagnostic in &list_result.diagnostics {
+            eprintln!("{}", format_k8s_diagnostic(diagnostic));
+        }
     }
 
     let filtered = engine::evaluate(&plan, &list_result.objects);
@@ -182,6 +189,7 @@ mod tests {
 
         assert!(matches!(args.output, OutputArg::Json));
         assert!(args.describe);
+        assert!(!args.no_pushdown_warnings);
         assert_eq!(args.resource, "pods");
         assert_eq!(args.query.first().map(String::as_str), Some("where"));
     }
@@ -199,6 +207,20 @@ mod tests {
             "pod-a",
         ]);
         assert!(matches!(args.output, OutputArg::Yaml));
+    }
+
+    #[test]
+    fn parses_no_pushdown_warnings_flag() {
+        let args = CliArgs::parse_from([
+            "kubiq",
+            "--no-pushdown-warnings",
+            "pods",
+            "where",
+            "metadata.name",
+            "==",
+            "pod-a",
+        ]);
+        assert!(args.no_pushdown_warnings);
     }
 
     #[test]

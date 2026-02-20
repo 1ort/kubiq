@@ -13,7 +13,7 @@ Implemented:
 - Automatic pagination/batching for large `list` responses
 - `where` filtering with `==`, `!=`, `AND`
 - `order by` sorting with multi-key support and `asc|desc`
-- Safe server-side filter pushdown for subset of `where` (`==`/`!=` on `metadata.name`, `metadata.namespace`, `metadata.labels.*`)
+- Best-effort server-side filter pushdown for technically feasible subset of `where` (`==`/`!=` on `metadata.name`, `metadata.namespace`, `metadata.labels.*`)
 - `select` projection
 - Output formats: `table`, `json`, `yaml`
 - Default summary output (`name` only)
@@ -59,6 +59,7 @@ Options:
 
 - `-o, --output <format>`: `table` (default), `json`, `yaml`
 - `-d, --describe`: print full nested object
+- `--no-pushdown-warnings`: suppress pushdown/fallback warnings in stderr
 - `-h, --help`: show help
 - `-V, --version`: show version
 
