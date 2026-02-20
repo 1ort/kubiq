@@ -1,21 +1,38 @@
 use std::cmp::Ordering;
 
-use crate::{dynamic_object::DynamicObject, parser};
+use crate::dynamic_object::DynamicObject;
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryPlan {
-    pub predicates: Vec<parser::Predicate>,
+    pub predicates: Vec<EnginePredicate>,
     pub select_paths: Option<Vec<String>>,
-    pub sort_keys: Option<Vec<parser::SortKey>>,
+    pub sort_keys: Option<Vec<EngineSortKey>>,
 }
 
-pub fn build_plan(ast: parser::QueryAst) -> QueryPlan {
-    QueryPlan {
-        predicates: ast.predicates,
-        select_paths: ast.select_paths,
-        sort_keys: ast.order_by,
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnginePredicate {
+    pub path: String,
+    pub op: EngineOperator,
+    pub value: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineOperator {
+    Eq,
+    Ne,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineSortKey {
+    pub path: String,
+    pub direction: EngineSortDirection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineSortDirection {
+    Asc,
+    Desc,
 }
 
 pub fn evaluate(
@@ -46,7 +63,7 @@ pub fn sort_objects(
 fn compare_objects(
     left: &DynamicObject,
     right: &DynamicObject,
-    sort_keys: &[parser::SortKey],
+    sort_keys: &[EngineSortKey],
 ) -> Ordering {
     for key in sort_keys {
         let ordering = compare_values(left.get(&key.path), right.get(&key.path), key.direction);
@@ -62,17 +79,17 @@ fn compare_objects(
 fn compare_values(
     left: Option<&Value>,
     right: Option<&Value>,
-    direction: parser::SortDirection,
+    direction: EngineSortDirection,
 ) -> Ordering {
     match (to_sort_value(left), to_sort_value(right)) {
         (SortValue::Nullish, SortValue::Nullish) => Ordering::Equal,
         (SortValue::Nullish, _) => match direction {
-            parser::SortDirection::Asc => Ordering::Less,
-            parser::SortDirection::Desc => Ordering::Greater,
+            EngineSortDirection::Asc => Ordering::Less,
+            EngineSortDirection::Desc => Ordering::Greater,
         },
         (_, SortValue::Nullish) => match direction {
-            parser::SortDirection::Asc => Ordering::Greater,
-            parser::SortDirection::Desc => Ordering::Less,
+            EngineSortDirection::Asc => Ordering::Greater,
+            EngineSortDirection::Desc => Ordering::Less,
         },
         (SortValue::Concrete(left), SortValue::Concrete(right)) => {
             compare_non_null_values(left, right, direction)
@@ -83,7 +100,7 @@ fn compare_values(
 fn compare_non_null_values(
     left: &Value,
     right: &Value,
-    direction: parser::SortDirection,
+    direction: EngineSortDirection,
 ) -> Ordering {
     let left_rank = value_rank(left);
     let right_rank = value_rank(right);
@@ -94,8 +111,8 @@ fn compare_non_null_values(
     }
 
     match direction {
-        parser::SortDirection::Asc => ordering,
-        parser::SortDirection::Desc => ordering.reverse(),
+        EngineSortDirection::Asc => ordering,
+        EngineSortDirection::Desc => ordering.reverse(),
     }
 }
 
@@ -152,7 +169,7 @@ fn to_sort_value(value: Option<&Value>) -> SortValue<'_> {
 
 fn matches_all(
     object: &DynamicObject,
-    predicates: &[parser::Predicate],
+    predicates: &[EnginePredicate],
 ) -> bool {
     predicates.iter().all(|predicate| {
         let value = object
@@ -160,8 +177,8 @@ fn matches_all(
             .and_then(|value| comparable_eq(value, &predicate.value));
 
         match predicate.op {
-            parser::Operator::Eq => value == Some(true),
-            parser::Operator::Ne => value == Some(false),
+            EngineOperator::Eq => value == Some(true),
+            EngineOperator::Ne => value == Some(false),
         }
     })
 }
@@ -184,12 +201,12 @@ mod tests {
     use serde_json::Value;
     use std::collections::BTreeMap;
 
-    use crate::{
-        dynamic_object::DynamicObject,
-        parser::{Operator, Predicate, SortDirection, SortKey},
-    };
+    use crate::dynamic_object::DynamicObject;
 
-    use super::{QueryPlan, evaluate, sort_objects};
+    use super::{
+        EngineOperator, EnginePredicate, EngineSortDirection, EngineSortKey, QueryPlan, evaluate,
+        sort_objects,
+    };
 
     #[test]
     fn keeps_only_matching_objects() {
@@ -206,9 +223,9 @@ mod tests {
         );
 
         let plan = QueryPlan {
-            predicates: vec![Predicate {
+            predicates: vec![EnginePredicate {
                 path: "metadata.namespace".to_string(),
-                op: Operator::Eq,
+                op: EngineOperator::Eq,
                 value: Value::String("default".to_string()),
             }],
             select_paths: None,
@@ -237,9 +254,9 @@ mod tests {
         let object = DynamicObject { fields };
 
         let eq_plan = QueryPlan {
-            predicates: vec![Predicate {
+            predicates: vec![EnginePredicate {
                 path: "spec.nodeName".to_string(),
-                op: Operator::Eq,
+                op: EngineOperator::Eq,
                 value: Value::String("worker-1".to_string()),
             }],
             select_paths: None,
@@ -247,9 +264,9 @@ mod tests {
         };
 
         let ne_plan = QueryPlan {
-            predicates: vec![Predicate {
+            predicates: vec![EnginePredicate {
                 path: "spec.nodeName".to_string(),
-                op: Operator::Ne,
+                op: EngineOperator::Ne,
                 value: Value::String("worker-1".to_string()),
             }],
             select_paths: None,
@@ -267,9 +284,9 @@ mod tests {
         let object = DynamicObject { fields };
 
         let eq_plan = QueryPlan {
-            predicates: vec![Predicate {
+            predicates: vec![EnginePredicate {
                 path: "spec.replicas".to_string(),
-                op: Operator::Eq,
+                op: EngineOperator::Eq,
                 value: Value::String("2".to_string()),
             }],
             select_paths: None,
@@ -277,9 +294,9 @@ mod tests {
         };
 
         let ne_plan = QueryPlan {
-            predicates: vec![Predicate {
+            predicates: vec![EnginePredicate {
                 path: "spec.replicas".to_string(),
-                op: Operator::Ne,
+                op: EngineOperator::Ne,
                 value: Value::String("2".to_string()),
             }],
             select_paths: None,
@@ -301,9 +318,9 @@ mod tests {
         let plan = QueryPlan {
             predicates: Vec::new(),
             select_paths: None,
-            sort_keys: Some(vec![SortKey {
+            sort_keys: Some(vec![EngineSortKey {
                 path: "metadata.name".to_string(),
-                direction: SortDirection::Asc,
+                direction: EngineSortDirection::Asc,
             }]),
         };
 
@@ -323,9 +340,9 @@ mod tests {
         let plan = QueryPlan {
             predicates: Vec::new(),
             select_paths: None,
-            sort_keys: Some(vec![SortKey {
+            sort_keys: Some(vec![EngineSortKey {
                 path: "spec.priority".to_string(),
-                direction: SortDirection::Desc,
+                direction: EngineSortDirection::Desc,
             }]),
         };
 
@@ -358,18 +375,18 @@ mod tests {
         let asc_plan = QueryPlan {
             predicates: Vec::new(),
             select_paths: None,
-            sort_keys: Some(vec![SortKey {
+            sort_keys: Some(vec![EngineSortKey {
                 path: "spec.rank".to_string(),
-                direction: SortDirection::Asc,
+                direction: EngineSortDirection::Asc,
             }]),
         };
 
         let desc_plan = QueryPlan {
             predicates: Vec::new(),
             select_paths: None,
-            sort_keys: Some(vec![SortKey {
+            sort_keys: Some(vec![EngineSortKey {
                 path: "spec.rank".to_string(),
-                direction: SortDirection::Desc,
+                direction: EngineSortDirection::Desc,
             }]),
         };
 
@@ -404,9 +421,9 @@ mod tests {
         let plan = QueryPlan {
             predicates: Vec::new(),
             select_paths: None,
-            sort_keys: Some(vec![SortKey {
+            sort_keys: Some(vec![EngineSortKey {
                 path: "spec.value".to_string(),
-                direction: SortDirection::Asc,
+                direction: EngineSortDirection::Asc,
             }]),
         };
 
@@ -436,13 +453,13 @@ mod tests {
             predicates: Vec::new(),
             select_paths: None,
             sort_keys: Some(vec![
-                SortKey {
+                EngineSortKey {
                     path: "spec.rank".to_string(),
-                    direction: SortDirection::Asc,
+                    direction: EngineSortDirection::Asc,
                 },
-                SortKey {
+                EngineSortKey {
                     path: "metadata.name".to_string(),
-                    direction: SortDirection::Asc,
+                    direction: EngineSortDirection::Asc,
                 },
             ]),
         };

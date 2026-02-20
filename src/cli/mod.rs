@@ -41,9 +41,9 @@ pub fn run() -> Result<(), CliError> {
         return Ok(());
     };
     let ast = parse_query_tokens(&args.query)?;
+    let pushdown_plan = k8s::planner::plan_pushdown(&ast.predicates);
+    let plan = ast_to_engine_plan(&ast);
 
-    let plan = engine::build_plan(ast);
-    let pushdown_plan = k8s::planner::plan_pushdown(&plan.predicates);
     if !args.no_pushdown_warnings {
         for diagnostic in &pushdown_plan.diagnostics {
             eprintln!("{}", format_planner_diagnostic(diagnostic));
@@ -101,6 +101,46 @@ fn parse_query_tokens(tokens: &[String]) -> Result<parser::QueryAst, CliError> {
         parser::parse_query_args(tokens).map_err(CliError::Parse)
     } else {
         parser::parse_query(&tokens.join(" ")).map_err(CliError::Parse)
+    }
+}
+
+fn ast_to_engine_plan(ast: &parser::QueryAst) -> engine::QueryPlan {
+    engine::QueryPlan {
+        predicates: ast.predicates.iter().map(predicate_to_engine).collect(),
+        select_paths: ast.select_paths.clone(),
+        sort_keys: ast
+            .order_by
+            .as_ref()
+            .map(|keys| keys.iter().map(sort_key_to_engine).collect()),
+    }
+}
+
+fn predicate_to_engine(predicate: &parser::Predicate) -> engine::EnginePredicate {
+    engine::EnginePredicate {
+        path: predicate.path.clone(),
+        op: operator_to_engine(&predicate.op),
+        value: predicate.value.clone(),
+    }
+}
+
+fn operator_to_engine(op: &parser::Operator) -> engine::EngineOperator {
+    match op {
+        parser::Operator::Eq => engine::EngineOperator::Eq,
+        parser::Operator::Ne => engine::EngineOperator::Ne,
+    }
+}
+
+fn sort_key_to_engine(key: &parser::SortKey) -> engine::EngineSortKey {
+    engine::EngineSortKey {
+        path: key.path.clone(),
+        direction: sort_direction_to_engine(key.direction),
+    }
+}
+
+fn sort_direction_to_engine(direction: parser::SortDirection) -> engine::EngineSortDirection {
+    match direction {
+        parser::SortDirection::Asc => engine::EngineSortDirection::Asc,
+        parser::SortDirection::Desc => engine::EngineSortDirection::Desc,
     }
 }
 
@@ -164,9 +204,11 @@ mod tests {
     use crate::error::{CliError, K8sError, OutputError, boxed_error};
 
     use super::{
-        CliArgs, OutputArg, format_k8s_diagnostic, format_planner_diagnostic, parse_query_tokens,
+        CliArgs, OutputArg, ast_to_engine_plan, format_k8s_diagnostic,
+        format_planner_diagnostic, parse_query_tokens,
     };
     use crate::{
+        engine::{EngineOperator, EngineSortDirection},
         k8s::{
             K8sDiagnostic, ListQueryOptions, SelectorFallbackReason, planner::NotPushableReason,
         },
@@ -260,6 +302,33 @@ mod tests {
             order_keys[0].direction,
             crate::parser::SortDirection::Desc
         ));
+    }
+
+    #[test]
+    fn converts_ast_to_engine_plan() {
+        let ast = crate::parser::parse_query(
+            "where metadata.namespace == demo-a and spec.enabled != true \
+             order by metadata.name desc select metadata.name",
+        )
+        .expect("must parse query");
+
+        let plan = ast_to_engine_plan(&ast);
+
+        assert_eq!(plan.predicates.len(), 2);
+        assert_eq!(plan.predicates[0].path, "metadata.namespace");
+        assert_eq!(plan.predicates[0].op, EngineOperator::Eq);
+        assert_eq!(plan.predicates[1].path, "spec.enabled");
+        assert_eq!(plan.predicates[1].op, EngineOperator::Ne);
+        assert_eq!(plan.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            plan.sort_keys
+                .as_ref()
+                .expect("sort keys must be present")
+                .first()
+                .expect("first key must exist")
+                .direction,
+            EngineSortDirection::Desc
+        );
     }
 
     #[test]
