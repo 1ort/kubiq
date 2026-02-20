@@ -1,12 +1,14 @@
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use crate::dynamic_object::DynamicObject;
+use crate::error::EngineError;
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryPlan {
     pub predicates: Vec<EnginePredicate>,
-    pub select_paths: Option<Vec<String>>,
+    pub selection: Option<EngineSelection>,
     pub sort_keys: Option<Vec<EngineSortKey>>,
 }
 
@@ -35,6 +37,27 @@ pub enum EngineSortDirection {
     Desc,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineSelection {
+    Paths(Vec<String>),
+    Aggregations(Vec<EngineAggregationExpr>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EngineAggregationExpr {
+    pub function: EngineAggregationFunction,
+    pub path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineAggregationFunction {
+    Count,
+    Sum,
+    Min,
+    Max,
+    Avg,
+}
+
 pub fn evaluate(
     plan: &QueryPlan,
     objects: &[DynamicObject],
@@ -58,6 +81,284 @@ pub fn sort_objects(
 
     sorted.sort_by(|left, right| compare_objects(left, right, sort_keys));
     sorted
+}
+
+pub fn aggregate(
+    plan: &QueryPlan,
+    objects: &[DynamicObject],
+) -> Result<Vec<DynamicObject>, EngineError> {
+    let Some(EngineSelection::Aggregations(expressions)) = &plan.selection else {
+        return Ok(objects.to_vec());
+    };
+
+    let mut row = BTreeMap::new();
+    for expression in expressions {
+        let key = aggregation_key(expression);
+        let value = evaluate_aggregation(expression, objects)?;
+        row.insert(key, value);
+    }
+
+    Ok(vec![DynamicObject { fields: row }])
+}
+
+fn evaluate_aggregation(
+    expression: &EngineAggregationExpr,
+    objects: &[DynamicObject],
+) -> Result<Value, EngineError> {
+    match expression.function {
+        EngineAggregationFunction::Count => count_aggregation(expression.path.as_deref(), objects),
+        EngineAggregationFunction::Sum => sum_aggregation(required_path(expression)?, objects),
+        EngineAggregationFunction::Min => min_max_aggregation(required_path(expression)?, objects, true),
+        EngineAggregationFunction::Max => min_max_aggregation(required_path(expression)?, objects, false),
+        EngineAggregationFunction::Avg => avg_aggregation(required_path(expression)?, objects),
+    }
+}
+
+fn required_path(expression: &EngineAggregationExpr) -> Result<&str, EngineError> {
+    expression
+        .path
+        .as_deref()
+        .ok_or_else(|| EngineError::InvalidAggregation {
+            function: aggregation_function_name(&expression.function).to_string(),
+            path: "*".to_string(),
+            expected: "path argument",
+            actual: "none".to_string(),
+        })
+}
+
+fn aggregation_key(expression: &EngineAggregationExpr) -> String {
+    let function = aggregation_function_name(&expression.function);
+    match expression.path.as_deref() {
+        Some(path) => format!("{function}({path})"),
+        None => format!("{function}(*)"),
+    }
+}
+
+fn aggregation_function_name(function: &EngineAggregationFunction) -> &'static str {
+    match function {
+        EngineAggregationFunction::Count => "count",
+        EngineAggregationFunction::Sum => "sum",
+        EngineAggregationFunction::Min => "min",
+        EngineAggregationFunction::Max => "max",
+        EngineAggregationFunction::Avg => "avg",
+    }
+}
+
+fn count_aggregation(
+    path: Option<&str>,
+    objects: &[DynamicObject],
+) -> Result<Value, EngineError> {
+    let count = if let Some(path) = path {
+        objects
+            .iter()
+            .filter(|object| object.get(path).is_some_and(|value| !value.is_null()))
+            .count()
+    } else {
+        objects.len()
+    };
+
+    Ok(Value::from(count as u64))
+}
+
+fn sum_aggregation(
+    path: &str,
+    objects: &[DynamicObject],
+) -> Result<Value, EngineError> {
+    let mut total = 0.0f64;
+    let mut has_value = false;
+    let mut all_integers = true;
+
+    for object in objects {
+        let Some(value) = object.get(path) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+
+        let Some(number) = value.as_f64() else {
+            return Err(non_numeric_aggregation_error("sum", path, value));
+        };
+
+        if !is_integer_value(value) {
+            all_integers = false;
+        }
+
+        has_value = true;
+        total += number;
+    }
+
+    if !has_value {
+        return Ok(Value::from(0));
+    }
+
+    if all_integers
+        && total.fract() == 0.0
+        && total >= i64::MIN as f64
+        && total <= i64::MAX as f64
+    {
+        return Ok(Value::from(total as i64));
+    }
+
+    serde_json::Number::from_f64(total)
+        .map(Value::Number)
+        .ok_or_else(|| EngineError::InvalidAggregation {
+            function: "sum".to_string(),
+            path: path.to_string(),
+            expected: "finite numeric result",
+            actual: "non-finite".to_string(),
+        })
+}
+
+fn avg_aggregation(
+    path: &str,
+    objects: &[DynamicObject],
+) -> Result<Value, EngineError> {
+    let mut total = 0.0f64;
+    let mut count = 0usize;
+
+    for object in objects {
+        let Some(value) = object.get(path) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+
+        let Some(number) = value.as_f64() else {
+            return Err(non_numeric_aggregation_error("avg", path, value));
+        };
+        total += number;
+        count += 1;
+    }
+
+    if count == 0 {
+        return Ok(Value::Null);
+    }
+
+    let average = total / count as f64;
+    serde_json::Number::from_f64(average)
+        .map(Value::Number)
+        .ok_or_else(|| EngineError::InvalidAggregation {
+            function: "avg".to_string(),
+            path: path.to_string(),
+            expected: "finite numeric result",
+            actual: "non-finite".to_string(),
+        })
+}
+
+fn min_max_aggregation(
+    path: &str,
+    objects: &[DynamicObject],
+    is_min: bool,
+) -> Result<Value, EngineError> {
+    let mut best: Option<&Value> = None;
+    let mut best_type: Option<&'static str> = None;
+
+    for object in objects {
+        let Some(value) = object.get(path) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+
+        let value_type = comparable_type(value).ok_or_else(|| EngineError::InvalidAggregation {
+            function: if is_min { "min" } else { "max" }.to_string(),
+            path: path.to_string(),
+            expected: "bool, number, or string",
+            actual: value_type_name(value).to_string(),
+        })?;
+
+        if let Some(current_type) = best_type
+            && current_type != value_type
+        {
+            return Err(EngineError::IncompatibleAggregationTypes {
+                function: if is_min { "min" } else { "max" }.to_string(),
+                path: path.to_string(),
+                left: current_type.to_string(),
+                right: value_type.to_string(),
+            });
+        }
+
+        if let Some(current) = best {
+            let ordering = compare_same_type_values(current, value)?;
+            if (is_min && ordering == Ordering::Greater) || (!is_min && ordering == Ordering::Less)
+            {
+                best = Some(value);
+            }
+        } else {
+            best = Some(value);
+            best_type = Some(value_type);
+        }
+    }
+
+    Ok(best.cloned().unwrap_or(Value::Null))
+}
+
+fn compare_same_type_values(
+    left: &Value,
+    right: &Value,
+) -> Result<Ordering, EngineError> {
+    match (left, right) {
+        (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
+        (Value::String(left), Value::String(right)) => Ok(left.cmp(right)),
+        (Value::Number(left), Value::Number(right)) => {
+            let Some(left) = left.as_f64() else {
+                return Ok(Ordering::Equal);
+            };
+            let Some(right) = right.as_f64() else {
+                return Ok(Ordering::Equal);
+            };
+            Ok(left.partial_cmp(&right).unwrap_or(Ordering::Equal))
+        }
+        _ => Err(EngineError::InvalidAggregation {
+            function: "min/max".to_string(),
+            path: "<internal>".to_string(),
+            expected: "comparable primitive values",
+            actual: "mixed or unsupported types".to_string(),
+        }),
+    }
+}
+
+fn comparable_type(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Bool(_) => Some("bool"),
+        Value::Number(_) => Some("number"),
+        Value::String(_) => Some("string"),
+        _ => None,
+    }
+}
+
+fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn is_integer_value(value: &Value) -> bool {
+    value
+        .as_i64()
+        .is_some()
+        || value.as_u64().is_some()
+}
+
+fn non_numeric_aggregation_error(
+    function: &str,
+    path: &str,
+    value: &Value,
+) -> EngineError {
+    EngineError::InvalidAggregation {
+        function: function.to_string(),
+        path: path.to_string(),
+        expected: "number",
+        actual: value_type_name(value).to_string(),
+    }
 }
 
 fn compare_objects(
@@ -204,7 +505,8 @@ mod tests {
     use crate::dynamic_object::DynamicObject;
 
     use super::{
-        EngineOperator, EnginePredicate, EngineSortDirection, EngineSortKey, QueryPlan, evaluate,
+        EngineAggregationExpr, EngineAggregationFunction, EngineOperator, EnginePredicate,
+        EngineSelection, EngineSortDirection, EngineSortKey, QueryPlan, aggregate, evaluate,
         sort_objects,
     };
 
@@ -228,7 +530,7 @@ mod tests {
                 op: EngineOperator::Eq,
                 value: Value::String("default".to_string()),
             }],
-            select_paths: None,
+            selection: None,
             sort_keys: None,
         };
 
@@ -259,7 +561,7 @@ mod tests {
                 op: EngineOperator::Eq,
                 value: Value::String("worker-1".to_string()),
             }],
-            select_paths: None,
+            selection: None,
             sort_keys: None,
         };
 
@@ -269,7 +571,7 @@ mod tests {
                 op: EngineOperator::Ne,
                 value: Value::String("worker-1".to_string()),
             }],
-            select_paths: None,
+            selection: None,
             sort_keys: None,
         };
 
@@ -289,7 +591,7 @@ mod tests {
                 op: EngineOperator::Eq,
                 value: Value::String("2".to_string()),
             }],
-            select_paths: None,
+            selection: None,
             sort_keys: None,
         };
 
@@ -299,7 +601,7 @@ mod tests {
                 op: EngineOperator::Ne,
                 value: Value::String("2".to_string()),
             }],
-            select_paths: None,
+            selection: None,
             sort_keys: None,
         };
 
@@ -317,7 +619,7 @@ mod tests {
 
         let plan = QueryPlan {
             predicates: Vec::new(),
-            select_paths: None,
+            selection: None,
             sort_keys: Some(vec![EngineSortKey {
                 path: "metadata.name".to_string(),
                 direction: EngineSortDirection::Asc,
@@ -339,7 +641,7 @@ mod tests {
 
         let plan = QueryPlan {
             predicates: Vec::new(),
-            select_paths: None,
+            selection: None,
             sort_keys: Some(vec![EngineSortKey {
                 path: "spec.priority".to_string(),
                 direction: EngineSortDirection::Desc,
@@ -374,7 +676,7 @@ mod tests {
 
         let asc_plan = QueryPlan {
             predicates: Vec::new(),
-            select_paths: None,
+            selection: None,
             sort_keys: Some(vec![EngineSortKey {
                 path: "spec.rank".to_string(),
                 direction: EngineSortDirection::Asc,
@@ -383,7 +685,7 @@ mod tests {
 
         let desc_plan = QueryPlan {
             predicates: Vec::new(),
-            select_paths: None,
+            selection: None,
             sort_keys: Some(vec![EngineSortKey {
                 path: "spec.rank".to_string(),
                 direction: EngineSortDirection::Desc,
@@ -420,7 +722,7 @@ mod tests {
 
         let plan = QueryPlan {
             predicates: Vec::new(),
-            select_paths: None,
+            selection: None,
             sort_keys: Some(vec![EngineSortKey {
                 path: "spec.value".to_string(),
                 direction: EngineSortDirection::Asc,
@@ -451,7 +753,7 @@ mod tests {
 
         let plan = QueryPlan {
             predicates: Vec::new(),
-            select_paths: None,
+            selection: None,
             sort_keys: Some(vec![
                 EngineSortKey {
                     path: "spec.rank".to_string(),
@@ -468,6 +770,128 @@ mod tests {
         let names = names(&sorted);
 
         assert_eq!(names, vec!["-", "alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn aggregates_count_sum_min_max_avg() {
+        let objects = vec![
+            object(&[("spec.replicas", Value::from(1))]),
+            object(&[("spec.replicas", Value::from(3))]),
+            object(&[("spec.replicas", Value::from(2))]),
+        ];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Count,
+                    path: None,
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Sum,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Min,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Max,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Avg,
+                    path: Some("spec.replicas".to_string()),
+                },
+            ])),
+            sort_keys: None,
+        };
+
+        let rows = aggregate(&plan, &objects).expect("must aggregate");
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0].fields;
+        assert_eq!(row.get("count(*)"), Some(&Value::from(3)));
+        assert_eq!(row.get("sum(spec.replicas)"), Some(&Value::from(6)));
+        assert_eq!(row.get("min(spec.replicas)"), Some(&Value::from(1)));
+        assert_eq!(row.get("max(spec.replicas)"), Some(&Value::from(3)));
+        assert_eq!(row.get("avg(spec.replicas)"), Some(&Value::from(2.0)));
+    }
+
+    #[test]
+    fn aggregates_empty_set_sql_like() {
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Count,
+                    path: None,
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Count,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Sum,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Avg,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Min,
+                    path: Some("spec.replicas".to_string()),
+                },
+                EngineAggregationExpr {
+                    function: EngineAggregationFunction::Max,
+                    path: Some("spec.replicas".to_string()),
+                },
+            ])),
+            sort_keys: None,
+        };
+
+        let rows = aggregate(&plan, &[]).expect("must aggregate");
+        let row = &rows[0].fields;
+        assert_eq!(row.get("count(*)"), Some(&Value::from(0)));
+        assert_eq!(row.get("count(spec.replicas)"), Some(&Value::from(0)));
+        assert_eq!(row.get("sum(spec.replicas)"), Some(&Value::from(0)));
+        assert_eq!(row.get("avg(spec.replicas)"), Some(&Value::Null));
+        assert_eq!(row.get("min(spec.replicas)"), Some(&Value::Null));
+        assert_eq!(row.get("max(spec.replicas)"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn aggregate_sum_errors_on_non_numeric_values() {
+        let objects = vec![object(&[("spec.replicas", Value::String("bad".to_string()))])];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![EngineAggregationExpr {
+                function: EngineAggregationFunction::Sum,
+                path: Some("spec.replicas".to_string()),
+            }])),
+            sort_keys: None,
+        };
+
+        let err = aggregate(&plan, &objects).expect_err("must fail");
+        assert!(err.to_string().contains("expects number"));
+    }
+
+    #[test]
+    fn aggregate_min_errors_on_mixed_types() {
+        let objects = vec![
+            object(&[("spec.value", Value::from(10))]),
+            object(&[("spec.value", Value::String("x".to_string()))]),
+        ];
+        let plan = QueryPlan {
+            predicates: Vec::new(),
+            selection: Some(EngineSelection::Aggregations(vec![EngineAggregationExpr {
+                function: EngineAggregationFunction::Min,
+                path: Some("spec.value".to_string()),
+            }])),
+            sort_keys: None,
+        };
+
+        let err = aggregate(&plan, &objects).expect_err("must fail");
+        assert!(err.to_string().contains("cannot compare mixed types"));
     }
 
     fn object(entries: &[(&str, Value)]) -> DynamicObject {

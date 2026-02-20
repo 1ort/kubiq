@@ -58,7 +58,18 @@ pub fn run() -> Result<(), CliError> {
     }
 
     let filtered = engine::evaluate(&plan, &list_result.objects);
-    let sorted = engine::sort_objects(&plan, &filtered);
+    let is_aggregation = matches!(plan.selection, Some(engine::EngineSelection::Aggregations(_)));
+    if args.describe && is_aggregation {
+        return Err(CliError::InvalidArgs(
+            "`--describe` is not supported for aggregation queries".to_string(),
+        ));
+    }
+
+    let rows = if is_aggregation {
+        engine::aggregate(&plan, &filtered).map_err(CliError::Engine)?
+    } else {
+        engine::sort_objects(&plan, &filtered)
+    };
 
     let detail = if args.describe {
         output::DetailLevel::Describe
@@ -67,10 +78,10 @@ pub fn run() -> Result<(), CliError> {
     };
 
     output::print(
-        &sorted,
+        &rows,
         map_output_format(args.output),
         detail,
-        plan.select_paths.as_deref(),
+        select_paths_for_output(&plan),
     )
     .map_err(CliError::Output)?;
 
@@ -107,11 +118,39 @@ fn parse_query_tokens(tokens: &[String]) -> Result<parser::QueryAst, CliError> {
 fn ast_to_engine_plan(ast: &parser::QueryAst) -> engine::QueryPlan {
     engine::QueryPlan {
         predicates: ast.predicates.iter().map(predicate_to_engine).collect(),
-        select_paths: ast.select_paths.clone(),
+        selection: ast.select.as_ref().map(select_clause_to_engine),
         sort_keys: ast
             .order_by
             .as_ref()
             .map(|keys| keys.iter().map(sort_key_to_engine).collect()),
+    }
+}
+
+fn select_clause_to_engine(clause: &parser::SelectClause) -> engine::EngineSelection {
+    match clause {
+        parser::SelectClause::Paths(paths) => engine::EngineSelection::Paths(paths.clone()),
+        parser::SelectClause::Aggregations(expressions) => engine::EngineSelection::Aggregations(
+            expressions.iter().map(aggregation_to_engine).collect(),
+        ),
+    }
+}
+
+fn aggregation_to_engine(expression: &parser::AggregationExpr) -> engine::EngineAggregationExpr {
+    engine::EngineAggregationExpr {
+        function: aggregation_function_to_engine(&expression.function),
+        path: expression.path.clone(),
+    }
+}
+
+fn aggregation_function_to_engine(
+    function: &parser::AggregationFunction,
+) -> engine::EngineAggregationFunction {
+    match function {
+        parser::AggregationFunction::Count => engine::EngineAggregationFunction::Count,
+        parser::AggregationFunction::Sum => engine::EngineAggregationFunction::Sum,
+        parser::AggregationFunction::Min => engine::EngineAggregationFunction::Min,
+        parser::AggregationFunction::Max => engine::EngineAggregationFunction::Max,
+        parser::AggregationFunction::Avg => engine::EngineAggregationFunction::Avg,
     }
 }
 
@@ -141,6 +180,13 @@ fn sort_direction_to_engine(direction: parser::SortDirection) -> engine::EngineS
     match direction {
         parser::SortDirection::Asc => engine::EngineSortDirection::Asc,
         parser::SortDirection::Desc => engine::EngineSortDirection::Desc,
+    }
+}
+
+fn select_paths_for_output(plan: &engine::QueryPlan) -> Option<&[String]> {
+    match &plan.selection {
+        Some(engine::EngineSelection::Paths(paths)) => Some(paths.as_slice()),
+        _ => None,
     }
 }
 
@@ -208,11 +254,13 @@ mod tests {
         format_planner_diagnostic, parse_query_tokens,
     };
     use crate::{
-        engine::{EngineOperator, EngineSortDirection},
+        engine::{
+            EngineAggregationFunction, EngineOperator, EngineSelection, EngineSortDirection,
+        },
         k8s::{
             K8sDiagnostic, ListQueryOptions, SelectorFallbackReason, planner::NotPushableReason,
         },
-        parser::Operator,
+        parser::{Operator, SelectClause},
     };
 
     #[test]
@@ -278,7 +326,10 @@ mod tests {
 
         let ast = parse_query_tokens(&tokens).expect("must parse query tokens");
         assert_eq!(ast.predicates.len(), 1);
-        assert_eq!(ast.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            ast.select,
+            Some(SelectClause::Paths(vec!["metadata.name".to_string()]))
+        );
     }
 
     #[test]
@@ -319,7 +370,10 @@ mod tests {
         assert_eq!(plan.predicates[0].op, EngineOperator::Eq);
         assert_eq!(plan.predicates[1].path, "spec.enabled");
         assert_eq!(plan.predicates[1].op, EngineOperator::Ne);
-        assert_eq!(plan.select_paths, Some(vec!["metadata.name".to_string()]));
+        assert_eq!(
+            plan.selection,
+            Some(EngineSelection::Paths(vec!["metadata.name".to_string()]))
+        );
         assert_eq!(
             plan.sort_keys
                 .as_ref()
@@ -329,6 +383,24 @@ mod tests {
                 .direction,
             EngineSortDirection::Desc
         );
+    }
+
+    #[test]
+    fn converts_aggregation_ast_to_engine_plan() {
+        let ast = crate::parser::parse_query(
+            "where metadata.namespace == demo-a select count(*), sum(spec.replicas)",
+        )
+        .expect("must parse query");
+
+        let plan = ast_to_engine_plan(&ast);
+        let Some(EngineSelection::Aggregations(expressions)) = plan.selection else {
+            panic!("expected aggregation selection");
+        };
+        assert_eq!(expressions.len(), 2);
+        assert_eq!(expressions[0].function, EngineAggregationFunction::Count);
+        assert_eq!(expressions[0].path, None);
+        assert_eq!(expressions[1].function, EngineAggregationFunction::Sum);
+        assert_eq!(expressions[1].path.as_deref(), Some("spec.replicas"));
     }
 
     #[test]
