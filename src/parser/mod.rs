@@ -3,7 +3,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::{char, multispace0, multispace1},
-    combinator::{all_consuming, map, opt, recognize, value},
+    combinator::{all_consuming, map, not, opt, peek, recognize, value},
     error::{Error, ErrorKind},
     multi::{many0, separated_list1},
     sequence::{delimited, preceded, terminated, tuple},
@@ -171,7 +171,17 @@ fn select_clause(input: &str) -> IResult<&str, Vec<String>> {
 }
 
 fn select_separator(input: &str) -> IResult<&str, ()> {
-    value((), delimited(multispace0, char(','), multispace0)).parse(input)
+    alt((
+        value((), delimited(multispace0, char(','), multispace0)),
+        value(
+            (),
+            terminated(
+                multispace1,
+                not(peek(alt((tag_no_case("order"), tag_no_case("select"))))),
+            ),
+        ),
+    ))
+    .parse(input)
 }
 
 fn order_by_clause(input: &str) -> IResult<&str, Vec<SortKey>> {
@@ -393,12 +403,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_select_paths_separated_by_spaces() {
-        let err = parse_query(
+    fn parses_select_paths_separated_by_spaces() {
+        let ast = parse_query(
             "where metadata.namespace == demo-a select metadata.name metadata.namespace",
         )
-        .expect_err("must reject whitespace-separated select paths");
-        assert_eq!(err, "invalid query syntax");
+        .expect("must parse valid query");
+        assert_eq!(
+            ast.select_paths,
+            Some(vec![
+                "metadata.name".to_string(),
+                "metadata.namespace".to_string()
+            ])
+        );
     }
 
     #[test]
