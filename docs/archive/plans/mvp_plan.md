@@ -1,3 +1,7 @@
+> Status: archived  
+> Archived on: 2026-02-21  
+> Reason: historical completed plan for `v0.1.0` (MVP)
+
 # MVP plan
 
 ## Этап 1 — CLI

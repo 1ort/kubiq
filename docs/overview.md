@@ -1,20 +1,26 @@
 # Documentation overview
 
-## Рекомендуемый порядок чтения
+## Active docs (recommended order)
 
 1. `README.md`
-2. `product/scope.md`
-3. `product/cli_spec.md`
-4. `architecture/system_overview.md`
-5. `query_language/grammar.md`
-6. `query_language/semantics.md`
-7. `execution/query_plan.md`
-8. `development/testing.md`
-9. `development/error_handling.md`
-10. `plans/mvp_plan.md`
+2. `documentation_policy.md`
+3. `product/scope.md`
+4. `product/cli_spec.md`
+5. `architecture/system_overview.md`
+6. `query_language/grammar.md`
+7. `query_language/semantics.md`
+8. `execution/query_plan.md`
+9. `development/testing.md`
+10. `development/error_handling.md`
 11. `plans/roadmap_v1.md`
-12. `plans/v0_2_0_plan.md`
-13. `releases/v0.2.0.md`
+12. `plans/milestones.md`
+13. `plans/tech_debt.md`
+14. `releases/v0.2.0.md`
+
+## Historical archive
+
+- `archive/plans/mvp_plan.md`
+- `archive/plans/v0_2_0_plan.md`
 
 ## Статус
 
