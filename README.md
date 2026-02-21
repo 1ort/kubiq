@@ -185,8 +185,10 @@ tests/
 
 See `docs/` for full details:
 
+- `docs/overview.md`
+- `docs/documentation_policy.md`
 - `docs/product/cli_spec.md`
 - `docs/query_language/grammar.md`
 - `docs/query_language/semantics.md`
 - `docs/development/testing.md`
-- `docs/plans/mvp_plan.md`
+- `docs/plans/roadmap_v1.md`

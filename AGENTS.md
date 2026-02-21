@@ -3,22 +3,27 @@
 ## Project goal
 Kubiq — CLI-инструмент для выполнения SQL-подобных запросов к Kubernetes API поверх любых ресурсов (core и CRD).
 
-## MVP scope
+## Current scope (`v0.2.0`)
 - Любые ресурсы (core + CRD)
 - Только `list`
-- Только `where`
+- `where` + `select` + `order by`
 - Операторы: `==`, `!=`
 - Логика: `AND`
-- Без aggregation
+- Глобальная aggregation в `select`: `count`, `sum`, `min`, `max`, `avg` (без `group by`)
+- Best-effort server-side filtering pushdown для поддерживаемого подмножества `where`
+- Форматы вывода: `table`, `json`, `yaml`; режимы: summary, `--describe`
 - Без watch
 
 ## Execution pipeline
-CLI → parse → AST → query plan → fetch → evaluate → output
+CLI → parse → AST → query plan → fetch → evaluate → (aggregate | sort) → project/output
 
 ## Source of truth
-- Архитектура: `ARCHITECTURE.md`
+- Архитектура (детально): `docs/architecture/`
+- Архитектура (кратко): `ARCHITECTURE.md`
 - DSL: `docs/query_language/`
-- План разработки: `docs/plans/mvp_plan.md`
+- CLI контракт: `docs/product/cli_spec.md`
+- Актуальная карта документации: `docs/overview.md`
+- Дорожная карта: `docs/plans/roadmap_v1.md`
 
 ## Core invariants
 1. Engine не зависит от Kubernetes.

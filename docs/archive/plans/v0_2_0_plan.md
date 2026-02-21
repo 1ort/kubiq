@@ -1,3 +1,7 @@
+> Status: archived  
+> Archived on: 2026-02-21  
+> Reason: historical completed decomposition plan for `v0.2.0`
+
 # v0.2.0 decomposition plan
 
 Цель `v0.2.0`: закрыть milestone "Query completeness baseline" из `docs/plans/roadmap_v1.md`.
