@@ -86,6 +86,13 @@ just sync-master feature/v0.3-discovery-cache
 - `just push` may print an URL hint for manual PR opening.
 - Agent-level GitHub automation (for example `gh pr create`, CI triage) stays outside project scripts.
 
+## Post-merge and CI triage policy
+
+- If a PR is already merged and new commits are added to the same feature branch, open a new PR for those commits.
+- After each merge, sync local `master` and delete the local merged feature branch.
+- For CI failures, always report check/job name, failing step, root cause, and run/job URL.
+- If check watch output appears stale, use run-level status as source of truth.
+
 ## CI alignment
 
 - CI runs `./scripts/automation-smoke.sh` to validate workflow tooling integrity.
