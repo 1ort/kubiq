@@ -2,8 +2,7 @@
 
 ## Top product gaps
 
-1. Watch-режим отсутствует
-2. Потоковая обработка результатов (`streaming`) отсутствует
+Открытых product gaps нет.
 
 ## Refactoring and quality backlog
 

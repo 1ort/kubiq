@@ -13,14 +13,13 @@
 
 ## Next milestones toward v1.0.0
 
-11. Streaming and watch
-12. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache)
-13. Query language v2 (`OR`, parentheses, `IN`, extended string operators)
-14. Explainability and UX (`--explain`, fallback transparency, output UX polish)
-15. API and integration surface stabilization
-16. Scale and performance baselines
-17. Security and policy readiness
-18. Release candidate and `v1.0.0`
+11. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache)
+12. Query language v2 (`OR`, parentheses, `IN`, extended string operators)
+13. Explainability and UX (`--explain`, fallback transparency, output UX polish)
+14. API and integration surface stabilization
+15. Scale and performance baselines
+16. Security and policy readiness
+17. Release candidate and `v1.0.0`
 
 Подробная дорожная карта: `docs/plans/roadmap_v1.md`
 Декомпозиция `v0.2.0` (архив): `docs/archive/plans/v0_2_0_plan.md`
