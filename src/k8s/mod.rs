@@ -1,6 +1,10 @@
 pub mod planner;
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{OnceLock, RwLock},
+    time::{Duration, Instant},
+};
 
 use kube::{
     Client,
@@ -19,6 +23,53 @@ use crate::{
 
 const LIST_PAGE_SIZE: u32 = 500;
 const MAX_LIST_PAGES: usize = 10_000;
+const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct DiscoveryCacheKey {
+    cluster_identity: String,
+    namespace: String,
+    resource: String,
+}
+
+impl DiscoveryCacheKey {
+    fn new(
+        cluster_identity: String,
+        namespace: String,
+        resource: &str,
+    ) -> Self {
+        Self {
+            cluster_identity,
+            namespace,
+            resource: normalize_resource(resource),
+        }
+    }
+
+    fn from_config(
+        config: &Config,
+        resource: &str,
+    ) -> Self {
+        let namespace = if config.default_namespace.is_empty() {
+            "default".to_string()
+        } else {
+            config.default_namespace.clone()
+        };
+        Self::new(config.cluster_url.to_string(), namespace, resource)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DiscoveryCacheEntry {
+    api_resource: ApiResource,
+    expires_at: Instant,
+}
+
+static DISCOVERY_CACHE: OnceLock<RwLock<HashMap<DiscoveryCacheKey, DiscoveryCacheEntry>>> =
+    OnceLock::new();
+
+fn discovery_cache() -> &'static RwLock<HashMap<DiscoveryCacheKey, DiscoveryCacheEntry>> {
+    DISCOVERY_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListQueryOptions {
@@ -63,7 +114,7 @@ pub async fn list_async(
     resource: &str,
     options: &ListQueryOptions,
 ) -> Result<ListResult, K8sError> {
-    let resource = resource.trim();
+    let resource = normalize_resource(resource);
     if resource.is_empty() {
         return Err(K8sError::EmptyResourceName);
     }
@@ -74,22 +125,21 @@ pub async fn list_async(
             source: boxed_error(source),
         })?;
 
+    let cache_key = DiscoveryCacheKey::from_config(&config, &resource);
     let client = Client::try_from(config).map_err(|source| K8sError::ClientBuild {
         source: boxed_error(source),
     })?;
 
-    let api_resource = resolve_api_resource(&client, resource).await?;
-    let api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
+    let mut api_resource = resolve_api_resource_cached(&client, &cache_key).await?;
+    let mut api: Api<DynamicObject> = Api::all_with(client.clone(), &api_resource);
 
-    let mut diagnostics = Vec::new();
-    let items = match list_pages(resource, &api, options).await {
-        Ok(items) => items,
-        Err(error) if options.has_selectors() && should_retry_without_selectors(&error) => {
-            diagnostics.push(K8sDiagnostic::SelectorFallback {
-                reason: SelectorFallbackReason::ApiRejectedBadRequest,
-                attempted: options.clone(),
-            });
-            list_pages(resource, &api, &ListQueryOptions::default()).await?
+    let (items, diagnostics) = match list_with_selector_fallback(&resource, &api, options).await {
+        Ok(result) => result,
+        Err(error) if should_retry_with_fresh_discovery(&error) => {
+            invalidate_discovery_cache(&cache_key);
+            api_resource = resolve_api_resource_cached(&client, &cache_key).await?;
+            api = Api::all_with(client.clone(), &api_resource);
+            list_with_selector_fallback(&resource, &api, options).await?
         }
         Err(error) => return Err(error),
     };
@@ -98,6 +148,27 @@ pub async fn list_async(
         objects: items.into_iter().map(dynamic_to_engine_object).collect(),
         diagnostics,
     })
+}
+
+async fn list_with_selector_fallback(
+    resource: &str,
+    api: &Api<DynamicObject>,
+    options: &ListQueryOptions,
+) -> Result<(Vec<DynamicObject>, Vec<K8sDiagnostic>), K8sError> {
+    let mut diagnostics = Vec::new();
+    let items = match list_pages(resource, api, options).await {
+        Ok(items) => items,
+        Err(error) if options.has_selectors() && should_retry_without_selectors(&error) => {
+            diagnostics.push(K8sDiagnostic::SelectorFallback {
+                reason: SelectorFallbackReason::ApiRejectedBadRequest,
+                attempted: options.clone(),
+            });
+            list_pages(resource, api, &ListQueryOptions::default()).await?
+        }
+        Err(error) => return Err(error),
+    };
+
+    Ok((items, diagnostics))
 }
 
 async fn list_pages(
@@ -151,6 +222,7 @@ fn build_list_params(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ListErrorClass {
     SelectorRejected,
+    ResourceResolutionStale,
     ApiUnreachable,
     Other,
 }
@@ -162,6 +234,9 @@ fn classify_list_error(
     match source {
         kube::Error::Api(error) if had_selectors && is_selector_rejection(error) => {
             ListErrorClass::SelectorRejected
+        }
+        kube::Error::Api(error) if is_resource_resolution_stale(error) => {
+            ListErrorClass::ResourceResolutionStale
         }
         kube::Error::Service(_) | kube::Error::HyperError(_) => ListErrorClass::ApiUnreachable,
         _ => ListErrorClass::Other,
@@ -187,6 +262,10 @@ fn is_selector_rejection(error: &kube::error::ErrorResponse) -> bool {
         .any(|marker| reason.contains(marker) || message.contains(marker))
 }
 
+fn is_resource_resolution_stale(error: &kube::error::ErrorResponse) -> bool {
+    matches!(error.code, 404 | 410)
+}
+
 fn map_list_error(
     resource: &str,
     had_selectors: bool,
@@ -194,6 +273,10 @@ fn map_list_error(
 ) -> K8sError {
     match classify_list_error(&source, had_selectors) {
         ListErrorClass::SelectorRejected => K8sError::SelectorRejected {
+            resource: resource.to_string(),
+            source: boxed_error(source),
+        },
+        ListErrorClass::ResourceResolutionStale => K8sError::ResourceResolutionStale {
             resource: resource.to_string(),
             source: boxed_error(source),
         },
@@ -210,6 +293,10 @@ fn map_list_error(
 
 fn should_retry_without_selectors(error: &K8sError) -> bool {
     matches!(error, K8sError::SelectorRejected { .. })
+}
+
+fn should_retry_with_fresh_discovery(error: &K8sError) -> bool {
+    matches!(error, K8sError::ResourceResolutionStale { .. })
 }
 
 fn ensure_page_limit(
@@ -272,6 +359,72 @@ async fn resolve_api_resource(
     Err(K8sError::ResourceNotFound {
         resource: resource.to_string(),
     })
+}
+
+async fn resolve_api_resource_cached(
+    client: &Client,
+    key: &DiscoveryCacheKey,
+) -> Result<ApiResource, K8sError> {
+    if let Some(api_resource) = cache_lookup(key) {
+        return Ok(api_resource);
+    }
+
+    let api_resource = resolve_api_resource(client, &key.resource).await?;
+    cache_insert(key.clone(), api_resource.clone(), DISCOVERY_CACHE_TTL);
+    Ok(api_resource)
+}
+
+fn cache_lookup(key: &DiscoveryCacheKey) -> Option<ApiResource> {
+    let now = Instant::now();
+    {
+        let cache = discovery_cache()
+            .read()
+            .expect("discovery cache read lock must not be poisoned");
+        if let Some(entry) = cache.get(key) {
+            if now <= entry.expires_at {
+                return Some(entry.api_resource.clone());
+            }
+        } else {
+            return None;
+        }
+    }
+
+    let mut cache = discovery_cache()
+        .write()
+        .expect("discovery cache write lock must not be poisoned");
+    if cache
+        .get(key)
+        .is_some_and(|entry| Instant::now() > entry.expires_at)
+    {
+        cache.remove(key);
+    }
+    None
+}
+
+fn cache_insert(
+    key: DiscoveryCacheKey,
+    api_resource: ApiResource,
+    ttl: Duration,
+) {
+    let entry = DiscoveryCacheEntry {
+        api_resource,
+        expires_at: Instant::now() + ttl,
+    };
+    discovery_cache()
+        .write()
+        .expect("discovery cache write lock must not be poisoned")
+        .insert(key, entry);
+}
+
+fn invalidate_discovery_cache(key: &DiscoveryCacheKey) {
+    discovery_cache()
+        .write()
+        .expect("discovery cache write lock must not be poisoned")
+        .remove(key);
+}
+
+fn normalize_resource(resource: &str) -> String {
+    resource.trim().to_ascii_lowercase()
 }
 
 fn map_discovery_error(source: kube::Error) -> K8sError {
@@ -358,14 +511,31 @@ fn flatten_value(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use kube::core::GroupVersionKind;
     use serde_json::{Value, json};
 
     use super::{
-        K8sDiagnostic, ListErrorClass, ListQueryOptions, MAX_LIST_PAGES, SelectorFallbackReason,
-        build_list_params, classify_list_error, ensure_page_limit, flatten_value, list_async,
-        next_continue_token, should_retry_without_selectors,
+        DiscoveryCacheEntry, DiscoveryCacheKey, K8sDiagnostic, ListErrorClass, ListQueryOptions,
+        MAX_LIST_PAGES, SelectorFallbackReason, build_list_params, cache_insert, cache_lookup,
+        classify_list_error, discovery_cache, ensure_page_limit, flatten_value,
+        invalidate_discovery_cache, list_async, next_continue_token, normalize_resource,
+        should_retry_with_fresh_discovery, should_retry_without_selectors,
     };
     use crate::error::K8sError;
+
+    fn clear_discovery_cache() {
+        discovery_cache()
+            .write()
+            .expect("discovery cache write lock must not be poisoned")
+            .clear();
+    }
+
+    fn dummy_api_resource() -> kube::core::ApiResource {
+        let gvk = GroupVersionKind::gvk("apps", "v1", "Deployment");
+        kube::core::ApiResource::from_gvk_with_plural(&gvk, "deployments")
+    }
 
     #[test]
     fn flattens_nested_objects_to_dot_paths() {
@@ -539,12 +709,104 @@ mod tests {
     }
 
     #[test]
+    fn classifies_not_found_as_resource_resolution_stale() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "the server could not find the requested resource".to_string(),
+            reason: "NotFound".to_string(),
+            code: 404,
+        });
+        assert_eq!(
+            classify_list_error(&error, false),
+            ListErrorClass::ResourceResolutionStale
+        );
+    }
+
+    #[test]
+    fn classifies_gone_as_resource_resolution_stale() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "resource no longer available".to_string(),
+            reason: "Gone".to_string(),
+            code: 410,
+        });
+        assert_eq!(
+            classify_list_error(&error, false),
+            ListErrorClass::ResourceResolutionStale
+        );
+    }
+
+    #[test]
+    fn normalizes_resource_to_trimmed_lowercase() {
+        assert_eq!(normalize_resource("  Pods "), "pods");
+    }
+
+    #[test]
+    fn discovery_cache_key_normalizes_resource_segment() {
+        let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), " PoDs ");
+        assert_eq!(key.resource, "pods");
+    }
+
+    #[test]
+    fn cache_lookup_returns_inserted_entry_before_expiry() {
+        clear_discovery_cache();
+        let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), "pods");
+        let api_resource = dummy_api_resource();
+        cache_insert(key.clone(), api_resource.clone(), Duration::from_secs(30));
+
+        let cached = cache_lookup(&key).expect("cache hit expected");
+        assert_eq!(cached.plural, api_resource.plural);
+    }
+
+    #[test]
+    fn cache_lookup_drops_expired_entry() {
+        clear_discovery_cache();
+        let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), "pods");
+        let api_resource = dummy_api_resource();
+        discovery_cache()
+            .write()
+            .expect("discovery cache write lock must not be poisoned")
+            .insert(
+                key.clone(),
+                DiscoveryCacheEntry {
+                    api_resource,
+                    expires_at: Instant::now() - Duration::from_secs(1),
+                },
+            );
+
+        assert!(cache_lookup(&key).is_none());
+        let cache = discovery_cache()
+            .read()
+            .expect("discovery cache read lock must not be poisoned");
+        assert!(!cache.contains_key(&key));
+    }
+
+    #[test]
+    fn invalidate_discovery_cache_removes_entry() {
+        clear_discovery_cache();
+        let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), "pods");
+        cache_insert(key.clone(), dummy_api_resource(), Duration::from_secs(30));
+        invalidate_discovery_cache(&key);
+
+        assert!(cache_lookup(&key).is_none());
+    }
+
+    #[test]
     fn retries_without_selectors_on_selector_rejected_errors() {
         let error = K8sError::SelectorRejected {
             resource: "pods".to_string(),
             source: crate::error::boxed_error(std::io::Error::other("bad request")),
         };
         assert!(should_retry_without_selectors(&error));
+    }
+
+    #[test]
+    fn retries_with_fresh_discovery_on_stale_resolution_errors() {
+        let error = K8sError::ResourceResolutionStale {
+            resource: "pods".to_string(),
+            source: crate::error::boxed_error(std::io::Error::other("stale mapping")),
+        };
+        assert!(should_retry_with_fresh_discovery(&error));
     }
 
     #[test]

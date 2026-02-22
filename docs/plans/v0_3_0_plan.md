@@ -2,7 +2,7 @@
 
 Цель `v0.3.0`: закрыть Milestone 11 "Reliability hardening" из `docs/plans/roadmap_v1.md` и закрыть P1 technical debt из `docs/plans/tech_debt.md`.
 
-Статус: **in progress** (`Epic 1` completed; `Epic 2-5` planned).
+Статус: **in progress** (`Epic 1` and `Epic 3` completed; `Epic 2/4/5` planned).
 
 В релиз входят 5 направлений:
 1. Async-first execution path (без runtime-per-request)
@@ -78,6 +78,13 @@
 ## Epic 3 - Discovery/resource-resolution cache
 
 Рекомендуемая ветка: `feature/v0.3-discovery-cache`
+Статус: **completed**.
+
+Результат:
+- Добавлен in-memory discovery cache (`resource -> ApiResource`) с фиксированным TTL (`v0.3` defaults-only).
+- Повторные запросы к тем же ресурсам в рамках TTL используют cache-hit вместо полного discovery.
+- Добавлена инвалидация cache и однократный retry с fresh discovery при typed stale-resolution ошибках list (`Api` 404/410).
+- Добавлены unit-тесты на hit/miss, expiry, invalidation и stale-classification.
 
 ### Tasks
 1. Cache implementation

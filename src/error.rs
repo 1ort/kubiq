@@ -49,6 +49,12 @@ pub enum K8sError {
         #[source]
         source: BoxError,
     },
+    #[error("resource resolution became stale for '{resource}': {source}")]
+    ResourceResolutionStale {
+        resource: String,
+        #[source]
+        source: BoxError,
+    },
     #[error("server rejected selectors for resource '{resource}': {source}")]
     SelectorRejected {
         resource: String,
@@ -149,6 +155,9 @@ fn k8s_tip(error: &K8sError) -> &'static str {
         }
         K8sError::SelectorRejected { .. } => {
             "Tip: API server rejected selectors; kubiq can retry without selectors and continue with client-side filtering."
+        }
+        K8sError::ResourceResolutionStale { .. } => {
+            "Tip: API resource mapping appears stale. Kubiq refreshes discovery once automatically; retry if the issue persists."
         }
         _ => "Tip: verify cluster access with `kubectl get ns` and then retry.",
     }
