@@ -13,7 +13,7 @@
 
 ## Next milestones toward v1.0.0
 
-11. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache) — in progress (`async-first` completed; retry/backoff, discovery cache, error hardening audit, path utils+dotted keys pending)
+11. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache) — in progress (`async-first` and discovery cache completed; retry/backoff, error hardening audit, path utils+dotted keys pending)
 12. Query language v2 (`OR`, parentheses, `IN`, extended string operators)
 13. Explainability and UX (`--explain`, fallback transparency, output UX polish)
 14. API and integration surface stabilization
