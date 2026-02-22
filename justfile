@@ -13,6 +13,9 @@ bootstrap:
 verify:
 	./scripts/verify.sh
 
+automation-smoke:
+	./scripts/automation-smoke.sh
+
 verify-fast:
 	cargo test -q
 
