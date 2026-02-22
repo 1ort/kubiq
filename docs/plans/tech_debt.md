@@ -41,3 +41,4 @@
 - Добавлен discovery/resource-resolution cache (`resource -> ApiResource`) с TTL, invalidation и typed stale-resolution retry
 - Добавлена defaults-only retry/backoff/timeout policy с typed retry classification и финальной retry-summary диагностикой
 - Flatten/unflatten/select-path логика сведена в единый path utilities модуль; dotted map keys (`.`) корректно сохраняются в select/describe через segment encoding
+- Проведен typed error hardening audit: mapping `kube::Error -> K8sError` стабилизирован, transient API status ветки и CLI tips синхронизированы

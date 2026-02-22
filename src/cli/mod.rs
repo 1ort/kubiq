@@ -536,7 +536,33 @@ mod tests {
             source: boxed_error(std::io::Error::other("forbidden")),
         });
         let rendered = err.to_string();
-        assert!(rendered.contains("verify cluster access with `kubectl get ns`"));
+        assert!(rendered.contains("discovery failed"));
+        assert!(rendered.contains("kubectl api-resources"));
+    }
+
+    #[test]
+    fn k8s_list_failed_tip_mentions_rbac_and_resource() {
+        let err = CliError::K8s(K8sError::ListFailed {
+            resource: "pods".to_string(),
+            source: boxed_error(std::io::Error::other("forbidden")),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("list request failed"));
+        assert!(rendered.contains("resource name, RBAC"));
+    }
+
+    #[test]
+    fn k8s_retry_exhausted_non_retryable_tip_is_specific() {
+        let err = CliError::K8s(K8sError::RetryExhausted {
+            stage: "list",
+            attempts: 2,
+            reason: RetryStopReason::NonRetryable,
+            final_error: RetryErrorKind::ListFailed,
+            source: boxed_error(std::io::Error::other("forbidden")),
+        });
+        let rendered = err.to_string();
+        assert!(rendered.contains("non-retryable"));
+        assert!(rendered.contains("check request/resource validity and RBAC"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Architecture
 
-Текущий baseline: **`v0.2.0`**.
+Текущий baseline: **`v0.3.0`**.
 
 `ARCHITECTURE.md` — краткий обзор. Детальная спецификация архитектуры находится в `docs/architecture/`.
 
@@ -56,7 +56,7 @@ Projection + Output (summary/describe/select, table/json/yaml)
 - Сохранение source chain (через `thiserror`)
 - Actionable tips на уровне CLI-ошибок
 
-## Current constraints (`v0.2.0`)
+## Current constraints (`v0.3.0`)
 
 - Только list
 - where + select + order by + global aggregation

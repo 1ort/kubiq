@@ -10,10 +10,10 @@
 8. Typed error hierarchy (`CliError`/`K8sError`/`OutputError`) реализована — ✅
 9. Server-side filtering (safe pushdown subset) реализован — ✅
 10. Query completeness baseline (`sort`, `aggregation`, best-effort server-side filtering pushdown) — ✅
+11. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache) — ✅
 
 ## Next milestones toward v1.0.0
 
-11. Reliability hardening (typed error mapping, retry/backoff, async-first, discovery cache) — in progress (`async-first`, discovery cache, retry/backoff, path utils+dotted keys completed; error hardening audit pending)
 12. Query language v2 (`OR`, parentheses, `IN`, extended string operators)
 13. Explainability and UX (`--explain`, fallback transparency, output UX polish)
 14. API and integration surface stabilization

@@ -2,7 +2,7 @@
 
 Цель `v0.3.0`: закрыть Milestone 11 "Reliability hardening" из `docs/plans/roadmap_v1.md` и закрыть P1 technical debt из `docs/plans/tech_debt.md`.
 
-Статус: **in progress** (`Epic 1/2/3/5` completed; `Epic 4` planned).
+Статус: **completed** (`Epic 1/2/3/4/5` completed).
 
 В релиз входят 5 направлений:
 1. Async-first execution path (без runtime-per-request)
@@ -114,6 +114,14 @@
 ## Epic 4 - Typed error hardening audit
 
 Рекомендуемая ветка: `feature/v0.3-error-hardening-audit`
+Статус: **completed**.
+
+Результат:
+- Проведен аудит веток K8s transport/API ошибок (`discovery`, `list`, `retry/timeout`, pagination guards).
+- Убран остаточный string-based selector heuristic: fallback `SelectorRejected` классифицируется typed-правилом (`Api` 400 при активных selectors).
+- Уточнен typed mapping transient API status codes (`408`, `429`, `5xx`) в устойчивую ветку `ApiUnreachable` + retry lifecycle.
+- Стабилизированы CLI tips и diagnostics для `DiscoveryRun`, `ListFailed`, `RetryExhausted`.
+- Добавлены unit-тесты на mapping `kube::Error -> K8sError` и стабильность diagnostics rendering.
 
 ### Tasks
 1. Audit
