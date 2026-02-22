@@ -11,6 +11,52 @@ where
     Box::new(error)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryStopReason {
+    NonRetryable,
+    RetryCapReached,
+}
+
+impl std::fmt::Display for RetryStopReason {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::NonRetryable => write!(f, "non-retryable error"),
+            Self::RetryCapReached => write!(f, "retry cap reached"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryErrorKind {
+    ApiUnreachable,
+    RequestTimeout,
+    SelectorRejected,
+    ResourceResolutionStale,
+    ListFailed,
+    DiscoveryRun,
+    Other,
+}
+
+impl std::fmt::Display for RetryErrorKind {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::ApiUnreachable => write!(f, "api unreachable"),
+            Self::RequestTimeout => write!(f, "request timeout"),
+            Self::SelectorRejected => write!(f, "selector rejected"),
+            Self::ResourceResolutionStale => write!(f, "stale resource resolution"),
+            Self::ListFailed => write!(f, "list failed"),
+            Self::DiscoveryRun => write!(f, "discovery failed"),
+            Self::Other => write!(f, "other"),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum K8sError {
     #[error("resource name is empty")]
@@ -41,6 +87,13 @@ pub enum K8sError {
         #[source]
         source: BoxError,
     },
+    #[error("request timed out during {stage} after {timeout_ms}ms: {source}")]
+    RequestTimeout {
+        stage: &'static str,
+        timeout_ms: u64,
+        #[source]
+        source: tokio::time::error::Elapsed,
+    },
     #[error("resource '{resource}' was not found via discovery")]
     ResourceNotFound { resource: String },
     #[error("failed to list resource '{resource}': {source}")]
@@ -58,6 +111,15 @@ pub enum K8sError {
     #[error("server rejected selectors for resource '{resource}': {source}")]
     SelectorRejected {
         resource: String,
+        #[source]
+        source: BoxError,
+    },
+    #[error("retry policy exhausted during {stage} after {attempts} attempts ({reason}, final={final_error}): {source}")]
+    RetryExhausted {
+        stage: &'static str,
+        attempts: usize,
+        reason: RetryStopReason,
+        final_error: RetryErrorKind,
         #[source]
         source: BoxError,
     },
@@ -153,12 +215,23 @@ fn k8s_tip(error: &K8sError) -> &'static str {
         K8sError::ApiUnreachable { .. } => {
             "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info"
         }
+        K8sError::RequestTimeout { .. } => {
+            "Tip: request timed out. Check cluster/API latency and retry."
+        }
         K8sError::SelectorRejected { .. } => {
             "Tip: API server rejected selectors; kubiq can retry without selectors and continue with client-side filtering."
         }
         K8sError::ResourceResolutionStale { .. } => {
             "Tip: API resource mapping appears stale. Kubiq refreshes discovery once automatically; retry if the issue persists."
         }
+        K8sError::RetryExhausted { reason, .. } => match reason {
+            RetryStopReason::RetryCapReached => {
+                "Tip: transient failures persisted after retries; verify API server health and network path."
+            }
+            RetryStopReason::NonRetryable => {
+                "Tip: operation became non-retryable; check request/resource validity and RBAC."
+            }
+        },
         _ => "Tip: verify cluster access with `kubectl get ns` and then retry.",
     }
 }

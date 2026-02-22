@@ -2,6 +2,7 @@ pub mod planner;
 
 use std::{
     collections::{BTreeMap, HashMap},
+    future::Future,
     sync::{OnceLock, RwLock},
     time::{Duration, Instant},
 };
@@ -14,16 +15,23 @@ use kube::{
     discovery,
 };
 use serde_json::Value;
-use tokio::runtime::Runtime;
+use tokio::{
+    runtime::Runtime,
+    time::{sleep, timeout},
+};
 
 use crate::{
     dynamic_object::DynamicObject as EngineObject,
-    error::{K8sError, boxed_error},
+    error::{K8sError, RetryErrorKind, RetryStopReason, boxed_error},
 };
 
 const LIST_PAGE_SIZE: u32 = 500;
 const MAX_LIST_PAGES: usize = 10_000;
 const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(60);
+const RETRY_MAX_ATTEMPTS: usize = 3;
+const RETRY_INITIAL_BACKOFF: Duration = Duration::from_millis(100);
+const RETRY_MAX_BACKOFF: Duration = Duration::from_millis(400);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct DiscoveryCacheKey {
@@ -71,6 +79,21 @@ fn discovery_cache() -> &'static RwLock<HashMap<DiscoveryCacheKey, DiscoveryCach
     DISCOVERY_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RetryPolicy {
+    max_attempts: usize,
+    initial_backoff: Duration,
+    max_backoff: Duration,
+    request_timeout: Duration,
+}
+
+const DEFAULT_RETRY_POLICY: RetryPolicy = RetryPolicy {
+    max_attempts: RETRY_MAX_ATTEMPTS,
+    initial_backoff: RETRY_INITIAL_BACKOFF,
+    max_backoff: RETRY_MAX_BACKOFF,
+    request_timeout: REQUEST_TIMEOUT,
+};
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListQueryOptions {
     pub field_selector: Option<String>,
@@ -95,11 +118,35 @@ pub enum K8sDiagnostic {
         reason: SelectorFallbackReason,
         attempted: ListQueryOptions,
     },
+    RetrySummary {
+        stage: &'static str,
+        attempts: usize,
+        reason: RetryStopReason,
+        final_error: RetryErrorKind,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectorFallbackReason {
     ApiRejectedBadRequest,
+}
+
+pub fn retry_summary_diagnostic(error: &K8sError) -> Option<K8sDiagnostic> {
+    match error {
+        K8sError::RetryExhausted {
+            stage,
+            attempts,
+            reason,
+            final_error,
+            ..
+        } => Some(K8sDiagnostic::RetrySummary {
+            stage,
+            attempts: *attempts,
+            reason: *reason,
+            final_error: *final_error,
+        }),
+        _ => None,
+    }
 }
 
 pub fn list(
@@ -185,10 +232,14 @@ async fn list_pages(
         ensure_page_limit(resource, page_count)?;
 
         let params = build_list_params(LIST_PAGE_SIZE, continue_token.as_deref(), options);
-        let mut page = api
-            .list(&params)
-            .await
-            .map_err(|source| map_list_error(resource, options.has_selectors(), source))?;
+        let mut page = run_with_retry(
+            "list",
+            &DEFAULT_RETRY_POLICY,
+            || api.list(&params),
+            |source| map_list_error(resource, options.has_selectors(), source),
+            is_retryable_kube_error,
+        )
+        .await?;
 
         all_items.append(&mut page.items);
         continue_token =
@@ -217,6 +268,113 @@ fn build_list_params(
         params = params.labels(selector);
     }
     params
+}
+
+fn retry_backoff_for_attempt(
+    policy: &RetryPolicy,
+    attempt: usize,
+) -> Duration {
+    let shift = attempt.saturating_sub(1).min(8);
+    let base_millis = policy.initial_backoff.as_millis() as u64;
+    let cap_millis = policy.max_backoff.as_millis() as u64;
+    let next_millis = base_millis.saturating_mul(1_u64 << shift).min(cap_millis);
+    Duration::from_millis(next_millis)
+}
+
+fn retry_error_kind(error: &K8sError) -> RetryErrorKind {
+    match error {
+        K8sError::ApiUnreachable { .. } => RetryErrorKind::ApiUnreachable,
+        K8sError::RequestTimeout { .. } => RetryErrorKind::RequestTimeout,
+        K8sError::SelectorRejected { .. } => RetryErrorKind::SelectorRejected,
+        K8sError::ResourceResolutionStale { .. } => RetryErrorKind::ResourceResolutionStale,
+        K8sError::ListFailed { .. } => RetryErrorKind::ListFailed,
+        K8sError::DiscoveryRun { .. } => RetryErrorKind::DiscoveryRun,
+        _ => RetryErrorKind::Other,
+    }
+}
+
+fn is_retryable_kube_error(source: &kube::Error) -> bool {
+    match source {
+        kube::Error::Service(_) | kube::Error::HyperError(_) => true,
+        kube::Error::Api(error) => error.code == 429 || error.code >= 500,
+        _ => false,
+    }
+}
+
+async fn run_with_retry<T, Op, Fut, Map, Classify>(
+    stage: &'static str,
+    policy: &RetryPolicy,
+    mut operation: Op,
+    mut map_error: Map,
+    mut classify: Classify,
+) -> Result<T, K8sError>
+where
+    Op: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, kube::Error>>,
+    Map: FnMut(kube::Error) -> K8sError,
+    Classify: FnMut(&kube::Error) -> bool,
+{
+    let mut attempt: usize = 1;
+
+    loop {
+        let result = timeout(policy.request_timeout, operation()).await;
+        match result {
+            Ok(Ok(value)) => return Ok(value),
+            Ok(Err(source)) => {
+                let retryable = classify(&source);
+                let mapped = map_error(source);
+
+                if retryable && attempt < policy.max_attempts {
+                    sleep(retry_backoff_for_attempt(policy, attempt)).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                if retryable {
+                    return Err(K8sError::RetryExhausted {
+                        stage,
+                        attempts: attempt,
+                        reason: RetryStopReason::RetryCapReached,
+                        final_error: retry_error_kind(&mapped),
+                        source: boxed_error(mapped),
+                    });
+                }
+
+                if attempt > 1 {
+                    return Err(K8sError::RetryExhausted {
+                        stage,
+                        attempts: attempt,
+                        reason: RetryStopReason::NonRetryable,
+                        final_error: retry_error_kind(&mapped),
+                        source: boxed_error(mapped),
+                    });
+                }
+
+                return Err(mapped);
+            }
+            Err(source) => {
+                let timed_out = K8sError::RequestTimeout {
+                    stage,
+                    timeout_ms: policy.request_timeout.as_millis() as u64,
+                    source,
+                };
+
+                if attempt < policy.max_attempts {
+                    sleep(retry_backoff_for_attempt(policy, attempt)).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                return Err(K8sError::RetryExhausted {
+                    stage,
+                    attempts: attempt,
+                    reason: RetryStopReason::RetryCapReached,
+                    final_error: RetryErrorKind::RequestTimeout,
+                    source: boxed_error(timed_out),
+                });
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,7 +454,14 @@ fn should_retry_without_selectors(error: &K8sError) -> bool {
 }
 
 fn should_retry_with_fresh_discovery(error: &K8sError) -> bool {
-    matches!(error, K8sError::ResourceResolutionStale { .. })
+    matches!(
+        error,
+        K8sError::ResourceResolutionStale { .. }
+            | K8sError::RetryExhausted {
+                final_error: RetryErrorKind::ResourceResolutionStale,
+                ..
+            }
+    )
 }
 
 fn ensure_page_limit(
@@ -336,10 +501,14 @@ async fn resolve_api_resource(
     client: &Client,
     resource: &str,
 ) -> Result<ApiResource, K8sError> {
-    let discovery = discovery::Discovery::new(client.clone())
-        .run()
-        .await
-        .map_err(map_discovery_error)?;
+    let discovery = run_with_retry(
+        "discovery",
+        &DEFAULT_RETRY_POLICY,
+        || discovery::Discovery::new(client.clone()).run(),
+        map_discovery_error,
+        is_retryable_kube_error,
+    )
+    .await?;
 
     for group in discovery.groups() {
         for (api_resource, capabilities) in group.recommended_resources() {
@@ -511,19 +680,26 @@ fn flatten_value(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{Duration, Instant},
+    };
 
     use kube::core::GroupVersionKind;
     use serde_json::{Value, json};
 
     use super::{
         DiscoveryCacheEntry, DiscoveryCacheKey, K8sDiagnostic, ListErrorClass, ListQueryOptions,
-        MAX_LIST_PAGES, SelectorFallbackReason, build_list_params, cache_insert, cache_lookup,
-        classify_list_error, discovery_cache, ensure_page_limit, flatten_value,
-        invalidate_discovery_cache, list_async, next_continue_token, normalize_resource,
-        should_retry_with_fresh_discovery, should_retry_without_selectors,
+        RetryPolicy, DEFAULT_RETRY_POLICY, MAX_LIST_PAGES, SelectorFallbackReason,
+        build_list_params, cache_insert, cache_lookup, classify_list_error, discovery_cache,
+        ensure_page_limit, flatten_value, invalidate_discovery_cache, is_retryable_kube_error,
+        list_async, next_continue_token, normalize_resource, retry_backoff_for_attempt,
+        run_with_retry, should_retry_with_fresh_discovery, should_retry_without_selectors,
     };
-    use crate::error::K8sError;
+    use crate::error::{K8sError, RetryErrorKind, RetryStopReason};
 
     fn clear_discovery_cache() {
         discovery_cache()
@@ -807,6 +983,224 @@ mod tests {
             source: crate::error::boxed_error(std::io::Error::other("stale mapping")),
         };
         assert!(should_retry_with_fresh_discovery(&error));
+    }
+
+    #[test]
+    fn retries_with_fresh_discovery_on_retry_exhausted_stale_resolution() {
+        let error = K8sError::RetryExhausted {
+            stage: "list",
+            attempts: 3,
+            reason: RetryStopReason::RetryCapReached,
+            final_error: RetryErrorKind::ResourceResolutionStale,
+            source: crate::error::boxed_error(std::io::Error::other("stale mapping")),
+        };
+        assert!(should_retry_with_fresh_discovery(&error));
+    }
+
+    #[test]
+    fn classifies_api_429_as_retryable() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "too many requests".to_string(),
+            reason: "TooManyRequests".to_string(),
+            code: 429,
+        });
+        assert!(is_retryable_kube_error(&error));
+    }
+
+    #[test]
+    fn classifies_api_500_as_retryable() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "internal".to_string(),
+            reason: "InternalError".to_string(),
+            code: 500,
+        });
+        assert!(is_retryable_kube_error(&error));
+    }
+
+    #[test]
+    fn classifies_api_400_as_non_retryable() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "bad request".to_string(),
+            reason: "BadRequest".to_string(),
+            code: 400,
+        });
+        assert!(!is_retryable_kube_error(&error));
+    }
+
+    #[test]
+    fn computes_exponential_backoff_with_cap() {
+        assert_eq!(
+            retry_backoff_for_attempt(&DEFAULT_RETRY_POLICY, 1),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            retry_backoff_for_attempt(&DEFAULT_RETRY_POLICY, 2),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            retry_backoff_for_attempt(&DEFAULT_RETRY_POLICY, 3),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            retry_backoff_for_attempt(&DEFAULT_RETRY_POLICY, 4),
+            Duration::from_millis(400)
+        );
+    }
+
+    #[test]
+    fn run_with_retry_succeeds_after_transient_error() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime init must succeed");
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            request_timeout: Duration::from_millis(20),
+        };
+
+        let result = runtime.block_on(run_with_retry(
+            "list",
+            &policy,
+            {
+                let attempts = Arc::clone(&attempts);
+                move || {
+                    let attempts = Arc::clone(&attempts);
+                    async move {
+                        let current = attempts.fetch_add(1, Ordering::SeqCst);
+                        if current == 0 {
+                            Err(kube::Error::Service(std::io::Error::other("connect").into()))
+                        } else {
+                            Ok(7_u8)
+                        }
+                    }
+                }
+            },
+            |source| super::map_list_error("pods", false, source),
+            super::is_retryable_kube_error,
+        ));
+
+        assert_eq!(result.expect("must succeed after retry"), 7_u8);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn run_with_retry_fails_fast_for_non_retryable_error() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime init must succeed");
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            request_timeout: Duration::from_millis(20),
+        };
+
+        let result: Result<u8, K8sError> = runtime.block_on(run_with_retry(
+            "list",
+            &policy,
+            || async {
+                Err(kube::Error::Api(kube::error::ErrorResponse {
+                    status: "Failure".to_string(),
+                    message: "forbidden".to_string(),
+                    reason: "Forbidden".to_string(),
+                    code: 403,
+                }))
+            },
+            |source| super::map_list_error("pods", false, source),
+            super::is_retryable_kube_error,
+        ));
+
+        assert!(matches!(result, Err(K8sError::ListFailed { .. })));
+    }
+
+    #[test]
+    fn run_with_retry_returns_retry_exhausted_on_retry_cap() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime init must succeed");
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            request_timeout: Duration::from_millis(20),
+        };
+
+        let result: Result<u8, K8sError> = runtime.block_on(run_with_retry(
+            "list",
+            &policy,
+            || async {
+                Err(kube::Error::Service(
+                    std::io::Error::other("dial tcp timeout").into(),
+                ))
+            },
+            |source| super::map_list_error("pods", false, source),
+            super::is_retryable_kube_error,
+        ));
+
+        assert!(matches!(
+            result,
+            Err(K8sError::RetryExhausted {
+                stage: "list",
+                attempts: 3,
+                reason: RetryStopReason::RetryCapReached,
+                final_error: RetryErrorKind::ApiUnreachable,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn run_with_retry_reports_timeout_path() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime init must succeed");
+        let policy = RetryPolicy {
+            max_attempts: 2,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            request_timeout: Duration::from_millis(5),
+        };
+
+        let result = runtime.block_on(run_with_retry(
+            "list",
+            &policy,
+            || async {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                Ok(1_u8)
+            },
+            |source| super::map_list_error("pods", false, source),
+            super::is_retryable_kube_error,
+        ));
+
+        assert!(matches!(
+            result,
+            Err(K8sError::RetryExhausted {
+                stage: "list",
+                attempts: 2,
+                reason: RetryStopReason::RetryCapReached,
+                final_error: RetryErrorKind::RequestTimeout,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn builds_retry_summary_diagnostic_from_retry_exhausted_error() {
+        let error = K8sError::RetryExhausted {
+            stage: "list",
+            attempts: 3,
+            reason: RetryStopReason::RetryCapReached,
+            final_error: RetryErrorKind::RequestTimeout,
+            source: crate::error::boxed_error(std::io::Error::other("timeout")),
+        };
+
+        let diagnostic = super::retry_summary_diagnostic(&error).expect("must produce diagnostic");
+        assert!(matches!(
+            diagnostic,
+            K8sDiagnostic::RetrySummary {
+                stage: "list",
+                attempts: 3,
+                reason: RetryStopReason::RetryCapReached,
+                final_error: RetryErrorKind::RequestTimeout,
+            }
+        ));
     }
 
     #[test]
