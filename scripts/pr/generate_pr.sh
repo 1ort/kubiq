@@ -18,10 +18,12 @@ case "$type" in
     ;;
 esac
 
-branch="$(git branch --show-current)"
+branch="$(git branch --show-current 2>/dev/null || true)"
 if [[ -z "$branch" ]]; then
-  echo "cannot detect current branch" >&2
-  exit 1
+  branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+fi
+if [[ -z "$branch" ]]; then
+  branch="detached-head"
 fi
 
 if [[ -n "$scope" ]]; then
