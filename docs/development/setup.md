@@ -6,6 +6,13 @@
 - `kubectl`
 - `minikube`
 - Docker (если используется драйвер `docker`)
+- `just` (рекомендуется для автоматизированного workflow)
+
+Установка `just`:
+
+```bash
+cargo install just
+```
 
 ## Сборка
 
@@ -37,3 +44,17 @@ MINIKUBE_PROFILE=kql-ci MINIKUBE_DRIVER=docker ./scripts/minikube-up.sh
 cargo test -q
 KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```
+
+## Автоматизированный workflow (рекомендуется)
+
+```bash
+just bootstrap
+just verify
+just feature v0.3-discovery-cache
+just ship "feat: add discovery cache"
+just push
+just pr-draft feat "add discovery cache" "k8s"
+just sync-master feature/v0.3-discovery-cache
+```
+
+Подробности: `docs/development/workflow.md`.

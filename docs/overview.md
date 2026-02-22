@@ -11,12 +11,13 @@
 7. `query_language/semantics.md`
 8. `execution/query_plan.md`
 9. `development/testing.md`
-10. `development/error_handling.md`
-11. `plans/roadmap_v1.md`
-12. `plans/v0_3_0_plan.md`
-13. `plans/milestones.md`
-14. `plans/tech_debt.md`
-15. `releases/v0.2.0.md`
+10. `development/workflow.md`
+11. `development/error_handling.md`
+12. `plans/roadmap_v1.md`
+13. `plans/v0_3_0_plan.md`
+14. `plans/milestones.md`
+15. `plans/tech_debt.md`
+16. `releases/v0.2.0.md`
 
 ## Historical archive
 
