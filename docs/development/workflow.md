@@ -57,7 +57,8 @@ just sync-master feature/v0.3-discovery-cache
 ## Command reference
 
 - `just bootstrap` - check required tools.
-- `just verify` - fmt + clippy + tests.
+- `just verify` - rustfmt check on changed `.rs` files + clippy + tests.
+- `just automation-smoke` - smoke checks for automation scripts and guards.
 - `just verify-fast` - quick local test pass.
 - `just e2e` - run minikube e2e test suite.
 - `just run <args>` - run kubiq with proxy env vars unset.
@@ -74,3 +75,8 @@ just sync-master feature/v0.3-discovery-cache
 - Optional file-scope guard for `just ship`:
   - `EXPECTED_FILES` can define allowed changed files.
   - Use `ALLOW_EXTRA=1` only when intentional.
+
+## CI alignment
+
+- CI runs `./scripts/automation-smoke.sh` to validate workflow tooling integrity.
+- CI runs `./scripts/verify.sh` to enforce the same local quality gate (`fmt + clippy + tests`).

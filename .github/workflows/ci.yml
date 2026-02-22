@@ -9,8 +9,8 @@ on:
       - master
 
 jobs:
-  test:
-    name: Test
+  verify:
+    name: Verify
     runs-on: ubuntu-latest
 
     steps:
@@ -20,5 +20,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run tests
-        run: cargo test -q
+      - name: Run automation smoke checks
+        run: ./scripts/automation-smoke.sh
+
+      - name: Run full local verify
+        run: ./scripts/verify.sh

@@ -7,7 +7,7 @@ if [[ -z "$name" ]]; then
   exit 1
 fi
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
+if [[ -n "$(git status --porcelain)" ]]; then
   echo "working tree is not clean; commit/stash changes before creating a feature branch" >&2
   exit 1
 fi
