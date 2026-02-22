@@ -215,8 +215,14 @@ fn k8s_tip(error: &K8sError) -> &'static str {
         K8sError::ApiUnreachable { .. } => {
             "Tip: Kubernetes API is unreachable. Check context/cluster:\n  kubectl config current-context\n  kubectl cluster-info"
         }
+        K8sError::DiscoveryRun { .. } => {
+            "Tip: discovery failed. Verify API groups/resources visibility:\n  kubectl api-resources"
+        }
         K8sError::RequestTimeout { .. } => {
             "Tip: request timed out. Check cluster/API latency and retry."
+        }
+        K8sError::ListFailed { .. } => {
+            "Tip: list request failed. Check resource name, RBAC, and API server response details."
         }
         K8sError::SelectorRejected { .. } => {
             "Tip: API server rejected selectors; kubiq can retry without selectors and continue with client-side filtering."

@@ -18,6 +18,7 @@
 14. `plans/milestones.md`
 15. `plans/tech_debt.md`
 16. `releases/v0.2.0.md`
+17. `releases/v0.3.0.md`
 
 ## Historical archive
 
@@ -26,6 +27,6 @@
 
 ## Статус
 
-- Текущий релизный baseline: **`v0.2.0`**
+- Текущий релизный baseline: **`v0.3.0`**
 - MVP: **готов** (`v0.1.0`)
 - Roadmap до `v1.0.0`: см. `plans/roadmap_v1.md`

@@ -297,7 +297,7 @@ fn retry_error_kind(error: &K8sError) -> RetryErrorKind {
 fn is_retryable_kube_error(source: &kube::Error) -> bool {
     match source {
         kube::Error::Service(_) | kube::Error::HyperError(_) => true,
-        kube::Error::Api(error) => error.code == 429 || error.code >= 500,
+        kube::Error::Api(error) => is_api_transient(error),
         _ => false,
     }
 }
@@ -382,6 +382,7 @@ where
 enum ListErrorClass {
     SelectorRejected,
     ResourceResolutionStale,
+    ApiTransient,
     ApiUnreachable,
     Other,
 }
@@ -397,32 +398,22 @@ fn classify_list_error(
         kube::Error::Api(error) if is_resource_resolution_stale(error) => {
             ListErrorClass::ResourceResolutionStale
         }
+        kube::Error::Api(error) if is_api_transient(error) => ListErrorClass::ApiTransient,
         kube::Error::Service(_) | kube::Error::HyperError(_) => ListErrorClass::ApiUnreachable,
         _ => ListErrorClass::Other,
     }
 }
 
 fn is_selector_rejection(error: &kube::error::ErrorResponse) -> bool {
-    if error.code != 400 {
-        return false;
-    }
-
-    let reason = error.reason.to_ascii_lowercase();
-    let message = error.message.to_ascii_lowercase();
-    const SELECTOR_MARKERS: [&str; 4] = [
-        "field selector",
-        "label selector",
-        "not a known field selector",
-        "field label not supported",
-    ];
-
-    SELECTOR_MARKERS
-        .iter()
-        .any(|marker| reason.contains(marker) || message.contains(marker))
+    error.code == 400
 }
 
 fn is_resource_resolution_stale(error: &kube::error::ErrorResponse) -> bool {
     matches!(error.code, 404 | 410)
+}
+
+fn is_api_transient(error: &kube::error::ErrorResponse) -> bool {
+    error.code == 408 || error.code == 429 || error.code >= 500
 }
 
 fn map_list_error(
@@ -437,6 +428,10 @@ fn map_list_error(
         },
         ListErrorClass::ResourceResolutionStale => K8sError::ResourceResolutionStale {
             resource: resource.to_string(),
+            source: boxed_error(source),
+        },
+        ListErrorClass::ApiTransient => K8sError::ApiUnreachable {
+            stage: "list",
             source: boxed_error(source),
         },
         ListErrorClass::ApiUnreachable => K8sError::ApiUnreachable {
@@ -599,10 +594,12 @@ fn normalize_resource(resource: &str) -> String {
 
 fn map_discovery_error(source: kube::Error) -> K8sError {
     match classify_list_error(&source, false) {
-        ListErrorClass::ApiUnreachable => K8sError::ApiUnreachable {
-            stage: "discovery",
-            source: boxed_error(source),
-        },
+        ListErrorClass::ApiTransient | ListErrorClass::ApiUnreachable => {
+            K8sError::ApiUnreachable {
+                stage: "discovery",
+                source: boxed_error(source),
+            }
+        }
         _ => K8sError::DiscoveryRun {
             source: boxed_error(source),
         },
@@ -634,6 +631,7 @@ mod tests {
     use std::{
         sync::{
             Arc,
+            Mutex, OnceLock,
             atomic::{AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
@@ -646,7 +644,8 @@ mod tests {
         DiscoveryCacheEntry, DiscoveryCacheKey, K8sDiagnostic, ListErrorClass, ListQueryOptions,
         RetryPolicy, DEFAULT_RETRY_POLICY, MAX_LIST_PAGES, SelectorFallbackReason,
         build_list_params, cache_insert, cache_lookup, classify_list_error, discovery_cache,
-        ensure_page_limit, invalidate_discovery_cache, is_retryable_kube_error, list_async,
+        ensure_page_limit, invalidate_discovery_cache, is_api_transient,
+        is_retryable_kube_error, list_async, map_discovery_error, map_list_error,
         next_continue_token, normalize_resource, retry_backoff_for_attempt, run_with_retry,
         should_retry_with_fresh_discovery, should_retry_without_selectors,
     };
@@ -657,6 +656,14 @@ mod tests {
             .write()
             .expect("discovery cache write lock must not be poisoned")
             .clear();
+    }
+
+    fn cache_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static CACHE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        CACHE_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("cache test mutex must not be poisoned")
     }
 
     fn dummy_api_resource() -> kube::core::ApiResource {
@@ -793,14 +800,17 @@ mod tests {
     }
 
     #[test]
-    fn classifies_non_selector_bad_request_as_other() {
+    fn classifies_bad_request_as_selector_rejected_when_selectors_present() {
         let error = kube::Error::Api(kube::error::ErrorResponse {
             status: "Failure".to_string(),
             message: "invalid request body".to_string(),
             reason: "BadRequest".to_string(),
             code: 400,
         });
-        assert_eq!(classify_list_error(&error, true), ListErrorClass::Other);
+        assert_eq!(
+            classify_list_error(&error, true),
+            ListErrorClass::SelectorRejected
+        );
     }
 
     #[test]
@@ -875,6 +885,7 @@ mod tests {
 
     #[test]
     fn cache_lookup_returns_inserted_entry_before_expiry() {
+        let _guard = cache_test_guard();
         clear_discovery_cache();
         let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), "pods");
         let api_resource = dummy_api_resource();
@@ -886,6 +897,7 @@ mod tests {
 
     #[test]
     fn cache_lookup_drops_expired_entry() {
+        let _guard = cache_test_guard();
         clear_discovery_cache();
         let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), "pods");
         let api_resource = dummy_api_resource();
@@ -909,6 +921,7 @@ mod tests {
 
     #[test]
     fn invalidate_discovery_cache_removes_entry() {
+        let _guard = cache_test_guard();
         clear_discovery_cache();
         let key = DiscoveryCacheKey::new("cluster-a".to_string(), "default".to_string(), "pods");
         cache_insert(key.clone(), dummy_api_resource(), Duration::from_secs(30));
@@ -955,6 +968,10 @@ mod tests {
             reason: "TooManyRequests".to_string(),
             code: 429,
         });
+        assert!(is_api_transient(match &error {
+            kube::Error::Api(inner) => inner,
+            _ => unreachable!("must be api error"),
+        }));
         assert!(is_retryable_kube_error(&error));
     }
 
@@ -967,6 +984,21 @@ mod tests {
             code: 500,
         });
         assert!(is_retryable_kube_error(&error));
+    }
+
+    #[test]
+    fn classifies_api_408_as_retryable() {
+        let error = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "request timeout".to_string(),
+            reason: "RequestTimeout".to_string(),
+            code: 408,
+        });
+        assert!(is_retryable_kube_error(&error));
+        assert_eq!(
+            classify_list_error(&error, false),
+            ListErrorClass::ApiTransient
+        );
     }
 
     #[test]
@@ -1095,6 +1127,38 @@ mod tests {
                 final_error: RetryErrorKind::ApiUnreachable,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn maps_api_transient_to_api_unreachable_for_list_stage() {
+        let mapped = map_list_error(
+            "pods",
+            false,
+            kube::Error::Api(kube::error::ErrorResponse {
+                status: "Failure".to_string(),
+                message: "too many requests".to_string(),
+                reason: "TooManyRequests".to_string(),
+                code: 429,
+            }),
+        );
+        assert!(matches!(mapped, K8sError::ApiUnreachable { stage: "list", .. }));
+    }
+
+    #[test]
+    fn maps_api_transient_to_api_unreachable_for_discovery_stage() {
+        let mapped = map_discovery_error(kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "internal".to_string(),
+            reason: "InternalError".to_string(),
+            code: 500,
+        }));
+        assert!(matches!(
+            mapped,
+            K8sError::ApiUnreachable {
+                stage: "discovery",
+                ..
+            }
         ));
     }
 
