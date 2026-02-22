@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::dynamic_object::DynamicObject;
 use crate::error::OutputError;
+use crate::path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -123,11 +124,7 @@ fn project_fields(
 fn nested_fields_map(
     object: &DynamicObject
 ) -> std::collections::BTreeMap<String, serde_json::Value> {
-    let mut root = serde_json::Value::Object(serde_json::Map::new());
-    for (path, value) in &object.fields {
-        let parts: Vec<&str> = path.split('.').collect();
-        insert_nested_value(&mut root, &parts, value.clone());
-    }
+    let root = path::reconstruct_nested_from_fields(&object.fields);
 
     match root {
         serde_json::Value::Object(map) => map.into_iter().collect(),
@@ -139,60 +136,7 @@ fn select_value(
     object: &DynamicObject,
     path: &str,
 ) -> Option<serde_json::Value> {
-    if let Some(value) = object.fields.get(path) {
-        return Some(value.clone());
-    }
-
-    let prefix = format!("{path}.");
-    let mut nested = serde_json::Value::Object(serde_json::Map::new());
-    let mut found = false;
-
-    for (key, value) in &object.fields {
-        if let Some(suffix) = key.strip_prefix(&prefix) {
-            if suffix.is_empty() {
-                continue;
-            }
-            found = true;
-            let parts: Vec<&str> = suffix.split('.').collect();
-            insert_nested_value(&mut nested, &parts, value.clone());
-        }
-    }
-
-    if found { Some(nested) } else { None }
-}
-
-fn insert_nested_value(
-    node: &mut serde_json::Value,
-    parts: &[&str],
-    value: serde_json::Value,
-) {
-    if parts.is_empty() {
-        *node = value;
-        return;
-    }
-
-    if let Ok(index) = parts[0].parse::<usize>() {
-        if !node.is_array() {
-            *node = serde_json::Value::Array(Vec::new());
-        }
-        if let serde_json::Value::Array(array) = node {
-            while array.len() <= index {
-                array.push(serde_json::Value::Null);
-            }
-            insert_nested_value(&mut array[index], &parts[1..], value);
-        }
-        return;
-    }
-
-    if !node.is_object() {
-        *node = serde_json::Value::Object(serde_json::Map::new());
-    }
-    if let serde_json::Value::Object(map) = node {
-        let entry = map
-            .entry(parts[0].to_string())
-            .or_insert(serde_json::Value::Null);
-        insert_nested_value(entry, &parts[1..], value);
-    }
+    path::select_path_value(&object.fields, path)
 }
 
 fn collect_columns(
@@ -436,5 +380,45 @@ mod tests {
 
         assert!(table.contains("| spec.nodeName |"));
         assert!(table.lines().any(|line| line.contains("| -")));
+    }
+
+    #[test]
+    fn describe_reconstructs_dotted_annotation_keys() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.annotations.kubectl%2Ekubernetes%2Eio/restartedAt".to_string(),
+            Value::String("2026-02-22T10:00:00Z".to_string()),
+        );
+
+        let json = render_json(&[DynamicObject { fields }], DetailLevel::Describe, None)
+            .expect("json output must serialize");
+        assert!(json.contains("\"metadata\": {"));
+        assert!(json.contains("\"annotations\": {"));
+        assert!(json.contains("\"kubectl.kubernetes.io/restartedAt\": \"2026-02-22T10:00:00Z\""));
+    }
+
+    #[test]
+    fn select_parent_path_rebuilds_dotted_annotation_keys() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "metadata.annotations.kubectl%2Ekubernetes%2Eio/restartedAt".to_string(),
+            Value::String("2026-02-22T10:00:00Z".to_string()),
+        );
+        fields.insert(
+            "metadata.annotations.app%2Ekubernetes%2Eio/name".to_string(),
+            Value::String("api".to_string()),
+        );
+
+        let select = vec!["metadata.annotations".to_string()];
+        let json = render_json(
+            &[DynamicObject { fields }],
+            DetailLevel::Summary,
+            Some(&select),
+        )
+        .expect("json output must serialize");
+
+        assert!(json.contains("\"metadata.annotations\": {"));
+        assert!(json.contains("\"kubectl.kubernetes.io/restartedAt\": \"2026-02-22T10:00:00Z\""));
+        assert!(json.contains("\"app.kubernetes.io/name\": \"api\""));
     }
 }

@@ -4,6 +4,7 @@ pub mod engine;
 pub mod error;
 pub mod k8s;
 pub mod output;
+pub mod path;
 pub mod parser;
 
 pub fn run() -> Result<(), error::CliError> {

@@ -12,17 +12,7 @@
 
 ### P1 (средний приоритет)
 
-1. Свести flatten/unflatten path-логику в единый модуль
-- Где: `src/k8s/mod.rs` (`flatten_value`), `src/output/mod.rs` (`insert_nested_value`)
-- Проблема: дублирование и риск расхождения семантики путей/массивов.
-- Что сделать: вынести path utilities в отдельный модуль и использовать в fetch/output.
-- Критерий готовности: единый набор тестов покрывает flatten + reconstruction roundtrip.
-
-2. Корректно обрабатывать map-ключи с `.` при describe/select parent path
-- Где: `src/k8s/mod.rs` (`flatten_value`), `src/output/mod.rs` (`insert_nested_value`, `select_value`)
-- Проблема: ключи вида `kubectl.kubernetes.io/...` интерпретируются как path-сегменты и искажаются при reconstruction.
-- Что сделать: добавить экранирование path-сегментов (или альтернативное кодирование), чтобы flatten/unflatten сохранял исходные ключи map без расщепления по `.`.
-- Критерий готовности: roundtrip сохраняет ключи с `.` без изменения структуры; есть unit/e2e тест на annotations/labels с dotted keys.
+Открытых P1 задач нет.
 
 ### P2 (низкий приоритет, но полезно закрыть)
 
@@ -50,3 +40,4 @@
 - Async-first K8s path: добавлен `k8s::list_async`, CLI переведен на async execution, `main` использует единый process-wide Tokio runtime
 - Добавлен discovery/resource-resolution cache (`resource -> ApiResource`) с TTL, invalidation и typed stale-resolution retry
 - Добавлена defaults-only retry/backoff/timeout policy с typed retry classification и финальной retry-summary диагностикой
+- Flatten/unflatten/select-path логика сведена в единый path utilities модуль; dotted map keys (`.`) корректно сохраняются в select/describe через segment encoding
