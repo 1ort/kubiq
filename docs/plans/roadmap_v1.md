@@ -18,21 +18,7 @@ Definition of Done:
 - Корректность подтверждена unit + e2e для core и CRD ресурсов
 - Документация CLI и semantics обновлена
 
-## Milestone 11 - Streaming and watch (`v0.3.x`)
-
-Цель: добавить работу с динамическими данными и большими выборками.
-
-Состав:
-- `watch` режим в CLI
-- Потоковая обработка результатов (без полной materialization в памяти)
-- Базовое управление скоростью/буферами в watch-stream
-
-Definition of Done:
-- `watch` покрыт e2e-сценариями на minikube
-- Потоковая модель не ломает текущие `where/select/output` гарантии
-- Задокументированы ограничения и поведение при реконнектах
-
-## Milestone 12 - Reliability hardening (`v0.4.x`)
+## Milestone 11 - Reliability hardening (`v0.3.x`)
 
 Цель: сделать поведение в продакшн-кластерах предсказуемым.
 
@@ -47,7 +33,7 @@ Definition of Done:
 - Есть тесты на retry/fallback ветки
 - Повторные запросы к тем же ресурсам показывают снижение накладных расходов discovery
 
-## Milestone 13 - Query language v2 (`v0.5.x`)
+## Milestone 12 - Query language v2 (`v0.4.x`)
 
 Цель: расширить выразительность языка без потери предсказуемости.
 
@@ -62,7 +48,7 @@ Definition of Done:
 - Нет двусмысленных интерпретаций выражений
 - Добавлены regression-тесты на сложные выражения и edge-кейсы
 
-## Milestone 14 - Explainability and UX (`v0.6.x`)
+## Milestone 13 - Explainability and UX (`v0.5.x`)
 
 Цель: улучшить дебаг и операторскую прозрачность.
 
@@ -77,7 +63,7 @@ Definition of Done:
 - Диагностика пригодна для copy-paste в issue/incident разбор
 - UX-изменения покрыты e2e snapshot/approval тестами (или эквивалентом)
 
-## Milestone 15 - API and integration surface (`v0.7.x`)
+## Milestone 14 - API and integration surface (`v0.6.x`)
 
 Цель: сделать Kubiq удобным компонентом для автоматизации.
 
@@ -91,7 +77,7 @@ Definition of Done:
 - Внешние интеграции могут пиноваться на контракт API/вывода
 - Breaking changes отслеживаются и объявляются заранее
 
-## Milestone 16 - Scale and performance (`v0.8.x`)
+## Milestone 15 - Scale and performance (`v0.7.x`)
 
 Цель: подтвердить эксплуатацию на больших кластерах.
 
@@ -104,7 +90,7 @@ Definition of Done:
 - Есть публично зафиксированные performance baselines
 - Регрессии производительности детектируются в CI
 
-## Milestone 17 - Security and policy readiness (`v0.9.x`)
+## Milestone 16 - Security and policy readiness (`v0.8.x`)
 
 Цель: подготовить релизный кандидат к enterprise-ограничениям.
 
@@ -117,7 +103,7 @@ Definition of Done:
 - Security/reliability checklist закрыт
 - Критичные угрозы/риски либо устранены, либо задокументированы как accepted risk
 
-## Milestone 18 - Release candidate and v1.0.0 (`v1.0.0`)
+## Milestone 17 - Release candidate and v1.0.0 (`v1.0.0`)
 
 Цель: стабилизировать контракт и выпустить первую мажорную версию.
 
