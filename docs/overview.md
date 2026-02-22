@@ -13,9 +13,10 @@
 9. `development/testing.md`
 10. `development/error_handling.md`
 11. `plans/roadmap_v1.md`
-12. `plans/milestones.md`
-13. `plans/tech_debt.md`
-14. `releases/v0.2.0.md`
+12. `plans/v0_3_0_plan.md`
+13. `plans/milestones.md`
+14. `plans/tech_debt.md`
+15. `releases/v0.2.0.md`
 
 ## Historical archive
 

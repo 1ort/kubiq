@@ -22,4 +22,5 @@
 17. Release candidate and `v1.0.0`
 
 Подробная дорожная карта: `docs/plans/roadmap_v1.md`
+Декомпозиция `v0.3.0` (актуальный план): `docs/plans/v0_3_0_plan.md`
 Декомпозиция `v0.2.0` (архив): `docs/archive/plans/v0_2_0_plan.md`

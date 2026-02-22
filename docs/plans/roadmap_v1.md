@@ -22,6 +22,8 @@ Definition of Done:
 
 Цель: сделать поведение в продакшн-кластерах предсказуемым.
 
+Декомпозиция релиза: `docs/plans/v0_3_0_plan.md`
+
 Состав:
 - typed-классификация transport/API ошибок без string эвристик
 - retry/backoff/timeout policy для сетевых и transient ошибок
