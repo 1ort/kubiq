@@ -9,3 +9,7 @@ pub mod parser;
 pub fn run() -> Result<(), error::CliError> {
     cli::run()
 }
+
+pub async fn run_async() -> Result<(), error::CliError> {
+    cli::run_async().await
+}

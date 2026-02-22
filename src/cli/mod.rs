@@ -37,6 +37,12 @@ struct CliArgs {
 }
 
 pub fn run() -> Result<(), CliError> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|source| CliError::K8s(crate::error::K8sError::RuntimeInit { source }))?;
+    runtime.block_on(run_async())
+}
+
+pub async fn run_async() -> Result<(), CliError> {
     let Some(args) = parse_cli_args()? else {
         return Ok(());
     };
@@ -50,7 +56,9 @@ pub fn run() -> Result<(), CliError> {
         }
     }
 
-    let list_result = k8s::list(&args.resource, &pushdown_plan.options).map_err(CliError::K8s)?;
+    let list_result = k8s::list_async(&args.resource, &pushdown_plan.options)
+        .await
+        .map_err(CliError::K8s)?;
     if !args.no_pushdown_warnings {
         for diagnostic in &list_result.diagnostics {
             eprintln!("{}", format_k8s_diagnostic(diagnostic));
@@ -58,7 +66,10 @@ pub fn run() -> Result<(), CliError> {
     }
 
     let filtered = engine::evaluate(&plan, &list_result.objects);
-    let is_aggregation = matches!(plan.selection, Some(engine::EngineSelection::Aggregations(_)));
+    let is_aggregation = matches!(
+        plan.selection,
+        Some(engine::EngineSelection::Aggregations(_))
+    );
     if args.describe && is_aggregation {
         return Err(CliError::InvalidArgs(
             "`--describe` is not supported for aggregation queries".to_string(),
@@ -148,7 +159,7 @@ fn aggregation_to_engine(expression: &parser::AggregationExpr) -> engine::Engine
 }
 
 fn aggregation_function_to_engine(
-    function: &parser::AggregationFunction,
+    function: &parser::AggregationFunction
 ) -> engine::EngineAggregationFunction {
     match function {
         parser::AggregationFunction::Count => engine::EngineAggregationFunction::Count,
@@ -262,14 +273,12 @@ mod tests {
     use crate::error::{CliError, K8sError, OutputError, boxed_error};
 
     use super::{
-        CliArgs, OutputArg, ast_to_engine_plan, format_k8s_diagnostic,
-        format_planner_diagnostic, output_paths_for_rows, parse_query_tokens,
+        CliArgs, OutputArg, ast_to_engine_plan, format_k8s_diagnostic, format_planner_diagnostic,
+        output_paths_for_rows, parse_query_tokens,
     };
     use crate::{
         dynamic_object::DynamicObject,
-        engine::{
-            EngineAggregationFunction, EngineOperator, EngineSelection, EngineSortDirection,
-        },
+        engine::{EngineAggregationFunction, EngineOperator, EngineSelection, EngineSortDirection},
         k8s::{
             K8sDiagnostic, ListQueryOptions, SelectorFallbackReason, planner::NotPushableReason,
         },
