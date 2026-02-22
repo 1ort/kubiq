@@ -55,4 +55,29 @@ for recipe in "${recipes[@]}"; do
   fi
 done
 
+echo "[docs-check] workflow doc includes agent execution policy"
+if ! contains "## Agent execution policy" "docs/development/workflow.md"; then
+  echo "docs/development/workflow.md must include 'Agent execution policy' section" >&2
+  exit 1
+fi
+
+echo "[docs-check] justfile includes critical recipes"
+required_recipes=(
+  "verify"
+  "automation-smoke"
+  "hygiene-check"
+  "docs-check"
+  "feature"
+  "ship"
+  "push"
+  "pr-draft"
+  "sync-master"
+)
+for recipe in "${required_recipes[@]}"; do
+  if ! printf '%s\n' "${recipes[@]}" | grep -Fxq "$recipe"; then
+    echo "justfile is missing required recipe: $recipe" >&2
+    exit 1
+  fi
+done
+
 echo "docs-check: OK"

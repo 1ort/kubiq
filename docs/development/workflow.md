@@ -86,6 +86,12 @@ just sync-master feature/v0.3-discovery-cache
 - `just push` may print an URL hint for manual PR opening.
 - Agent-level GitHub automation (for example `gh pr create`, CI triage) stays outside project scripts.
 
+## Agent execution policy
+
+- Agent flow is `just-first`: use `just` recipes as default entrypoint for local operations.
+- Direct `scripts/*` execution is fallback-only and must be reported explicitly:
+  - `Fallback used: <command>. Reason: <why just path was not applicable>.`
+
 ## Post-merge and CI triage policy
 
 - If a PR is already merged and new commits are added to the same feature branch, open a new PR for those commits.
