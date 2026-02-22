@@ -2,7 +2,7 @@
 
 Цель `v0.3.0`: закрыть Milestone 11 "Reliability hardening" из `docs/plans/roadmap_v1.md` и закрыть P1 technical debt из `docs/plans/tech_debt.md`.
 
-Статус: **in progress** (`Epic 1/2/3` completed; `Epic 4/5` planned).
+Статус: **in progress** (`Epic 1/2/3/5` completed; `Epic 4` planned).
 
 В релиз входят 5 направлений:
 1. Async-first execution path (без runtime-per-request)
@@ -135,6 +135,13 @@
 ## Epic 5 - Unified path utilities + dotted keys fix (P1 debt)
 
 Рекомендуемая ветка: `feature/v0.3-path-utils-dotted-keys`
+Статус: **completed**.
+
+Результат:
+- Flatten/unflatten/select-path логика сведена в единый модуль path utilities и подключена в `k8s` + `output`.
+- Добавлено segment-level percent-encoding для dotted map keys (`.`/`%`) с обратимым decode.
+- Roundtrip для `metadata.annotations`/`metadata.labels` с dotted keys сохраняет исходные ключи без искажения.
+- Добавлены unit/e2e тесты на parent-path select/describe с ключами вида `kubectl.kubernetes.io/...`.
 
 ### Tasks
 1. Refactor path logic

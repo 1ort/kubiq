@@ -1,7 +1,7 @@
 pub mod planner;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     future::Future,
     sync::{OnceLock, RwLock},
     time::{Duration, Instant},
@@ -23,6 +23,7 @@ use tokio::{
 use crate::{
     dynamic_object::DynamicObject as EngineObject,
     error::{K8sError, RetryErrorKind, RetryStopReason, boxed_error},
+    path,
 };
 
 const LIST_PAGE_SIZE: u32 = 500;
@@ -609,7 +610,6 @@ fn map_discovery_error(source: kube::Error) -> K8sError {
 }
 
 fn dynamic_to_engine_object(object: DynamicObject) -> EngineObject {
-    let mut fields = BTreeMap::new();
     let mut root = serde_json::Map::new();
 
     root.insert(
@@ -625,57 +625,8 @@ fn dynamic_to_engine_object(object: DynamicObject) -> EngineObject {
         root.insert("data".to_string(), object.data);
     }
 
-    flatten_value("", &Value::Object(root), &mut fields);
+    let fields = path::flatten_json_to_fields(&Value::Object(root));
     EngineObject { fields }
-}
-
-fn flatten_value(
-    path: &str,
-    value: &Value,
-    out: &mut BTreeMap<String, Value>,
-) {
-    match value {
-        Value::Object(map) => {
-            for (key, child) in map {
-                let child_path = if path.is_empty() {
-                    key.to_string()
-                } else {
-                    format!("{path}.{key}")
-                };
-                flatten_value(&child_path, child, out);
-            }
-        }
-        Value::Array(array) => {
-            for (index, child) in array.iter().enumerate() {
-                let child_path = if path.is_empty() {
-                    index.to_string()
-                } else {
-                    format!("{path}.{index}")
-                };
-                flatten_value(&child_path, child, out);
-            }
-
-            if !path.is_empty() {
-                out.insert(path.to_string(), value.clone());
-            }
-        }
-        Value::String(string) => {
-            if !path.is_empty() {
-                out.insert(path.to_string(), Value::String(string.clone()));
-            }
-        }
-        Value::Bool(boolean) => {
-            if !path.is_empty() {
-                out.insert(path.to_string(), Value::Bool(*boolean));
-            }
-        }
-        Value::Number(number) => {
-            if !path.is_empty() {
-                out.insert(path.to_string(), Value::Number(number.clone()));
-            }
-        }
-        Value::Null => {}
-    }
 }
 
 #[cfg(test)]
@@ -695,9 +646,9 @@ mod tests {
         DiscoveryCacheEntry, DiscoveryCacheKey, K8sDiagnostic, ListErrorClass, ListQueryOptions,
         RetryPolicy, DEFAULT_RETRY_POLICY, MAX_LIST_PAGES, SelectorFallbackReason,
         build_list_params, cache_insert, cache_lookup, classify_list_error, discovery_cache,
-        ensure_page_limit, flatten_value, invalidate_discovery_cache, is_retryable_kube_error,
-        list_async, next_continue_token, normalize_resource, retry_backoff_for_attempt,
-        run_with_retry, should_retry_with_fresh_discovery, should_retry_without_selectors,
+        ensure_page_limit, invalidate_discovery_cache, is_retryable_kube_error, list_async,
+        next_continue_token, normalize_resource, retry_backoff_for_attempt, run_with_retry,
+        should_retry_with_fresh_discovery, should_retry_without_selectors,
     };
     use crate::error::{K8sError, RetryErrorKind, RetryStopReason};
 
@@ -715,7 +666,6 @@ mod tests {
 
     #[test]
     fn flattens_nested_objects_to_dot_paths() {
-        let mut out = std::collections::BTreeMap::new();
         let value = json!({
             "metadata": {
                 "namespace": "demo-a"
@@ -726,7 +676,7 @@ mod tests {
             }
         });
 
-        flatten_value("", &value, &mut out);
+        let out = crate::path::flatten_json_to_fields(&value);
 
         assert_eq!(
             out.get("metadata.namespace"),

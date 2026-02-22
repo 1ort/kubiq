@@ -30,6 +30,13 @@ fn run_kubiq(args: &[&str]) -> std::process::Output {
     cmd.output().expect("kubiq command must run")
 }
 
+fn run_kubectl(args: &[&str]) -> std::process::Output {
+    Command::new("kubectl")
+        .args(args)
+        .output()
+        .expect("kubectl command must run")
+}
+
 #[test]
 fn e2e_table_where_select_for_core_resource() {
     if !e2e_enabled() || !cluster_ready() {
@@ -149,6 +156,63 @@ fn e2e_json_select_parent_path_is_nested() {
     assert_eq!(
         metadata.get("namespace"),
         Some(&JsonValue::String("demo-a".to_string()))
+    );
+}
+
+#[test]
+fn e2e_json_select_annotations_preserves_dotted_keys() {
+    if !e2e_enabled() || !cluster_ready() {
+        return;
+    }
+
+    let annotate = run_kubectl(&[
+        "annotate",
+        "pod",
+        "worker-a",
+        "-n",
+        "demo-a",
+        "kubectl.kubernetes.io/restartedAt=2026-02-22T10:00:00Z",
+        "--overwrite",
+    ]);
+    assert!(
+        annotate.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&annotate.stderr)
+    );
+
+    let output = run_kubiq(&[
+        "pods",
+        "where",
+        "metadata.name",
+        "==",
+        "worker-a",
+        "-o",
+        "json",
+        "select",
+        "metadata.annotations",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rows: JsonValue =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
+    let first = rows
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("must return at least one object");
+
+    let annotations = first
+        .get("metadata.annotations")
+        .and_then(JsonValue::as_object)
+        .expect("metadata.annotations must be nested object");
+
+    assert_eq!(
+        annotations.get("kubectl.kubernetes.io/restartedAt"),
+        Some(&JsonValue::String("2026-02-22T10:00:00Z".to_string()))
     );
 }
 
