@@ -65,7 +65,24 @@ echo "[5/6] hygiene smoke checks"
 
 echo "[6/6] justfile parse smoke"
 if command -v just >/dev/null; then
-  just --list >/dev/null
+  just_output="$(just --list)"
+  required_recipes=(
+    "verify"
+    "automation-smoke"
+    "hygiene-check"
+    "docs-check"
+    "feature"
+    "ship"
+    "push"
+    "pr-draft"
+    "sync-master"
+  )
+  for recipe in "${required_recipes[@]}"; do
+    if ! printf '%s\n' "$just_output" | grep -Fq "$recipe"; then
+      echo "justfile parse smoke failed: missing recipe in just --list output: $recipe" >&2
+      exit 1
+    fi
+  done
 fi
 
 echo "automation smoke: OK"

@@ -68,11 +68,48 @@ CLI → parse → AST → query plan → fetch → evaluate → (aggregate | sor
 - Текст названия и описания MR (PR) всегда писать на английском языке.
 - Если пользователь явно просит реализовать несколько независимых пунктов, каждый пункт фиксировать отдельным коммитом.
 
+## Post-merge policy
+- Если MR уже слит, но в feature-ветке появились новые коммиты, открывать новый MR для этих коммитов автоматически.
+- После merge всегда синхронизировать локальный `master` и удалять локальную feature-ветку.
+
 ## Memory and fixation policy
 - Если пользователь просит "запомнить" или "зафиксировать" правило/решение, это нужно явно записать:
   - либо в `AGENTS.md` (если правило агент-ориентированное/процессное),
   - либо в актуальную документацию проекта в `docs/` (если это проектный контракт/поведение/процесс).
+- Запрос на "запомнить"/"зафиксировать" считается обязательным и задача не завершена, пока фиксация не внесена в `AGENTS.md` или `docs/` и не закоммичена.
+
+## CI triage policy
+- При падении CI сначала получать статус checks, затем логи конкретного failing job.
+- В отчёте пользователю всегда указывать:
+  - имя check/job,
+  - failing step,
+  - root cause,
+  - ссылку на run/job.
+- После фикса обязательно:
+  - запушить изменения,
+  - дождаться green checks,
+  - подтвердить итоговый статус и ссылку на run.
+- Если `gh pr checks --watch` показывает stale/pending долго, использовать `gh run view` как источник истины по статусу run.
 
 ## Automation boundaries
 - Project-level scripts (`scripts/*`) и `justfile` не должны зависеть от GitHub CLI/API.
 - Для GitHub operations агент может использовать отдельный skill/инструменты, но это не должно встраиваться в проектные скрипты.
+- Для стандартных локальных операций агент должен использовать `just` как default entrypoint (`just-first` policy).
+- Прямой вызов `scripts/*` допустим только как fallback и должен быть явно отмечен в финальном отчёте:
+  - `Fallback used: <command>. Reason: <why just path was not applicable>.`
+
+## Automation script reliability
+- Скрипты в `scripts/*` должны быть portable: не требовать нестандартных утилит без fallback (например, `rg` -> fallback на `grep`).
+- Для скриптов с `set -euo pipefail` избегать конструкций, падающих на пустых результатах (`ls`+glob); использовать безопасные проверки (`find`, `test`, явные условия).
+- Изменения в automation-скриптах должны сопровождаться smoke-проверками локально и в CI.
+
+## Canonical just mapping
+- `just verify` -> `./scripts/verify.sh`
+- `just automation-smoke` -> `./scripts/automation-smoke.sh`
+- `just hygiene-check` -> `./scripts/hygiene-smoke.sh`
+- `just docs-check` -> `./scripts/docs-check.sh`
+- `just feature <name>` -> `./scripts/git/feature.sh`
+- `just ship <msg>` -> `./scripts/git/ship.sh`
+- `just push` -> `./scripts/git/push.sh`
+- `just sync-master [branch]` -> `./scripts/git/sync_master.sh`
+- `just pr-draft <type> <title> [scope]` -> `./scripts/pr/generate_pr.sh`
