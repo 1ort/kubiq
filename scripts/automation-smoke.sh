@@ -19,11 +19,11 @@ trap cleanup EXIT
 
 worktree_tmp=".tmp"
 mkdir -p "$worktree_tmp"
-before_count="$(ls -1 "$worktree_tmp"/pr_*.md 2>/dev/null | wc -l)"
+before_count="$(find "$worktree_tmp" -maxdepth 1 -type f -name 'pr_*.md' | wc -l)"
 
 TYPE=chore TITLE="automation smoke check" SCOPE=devx ./scripts/pr/generate_pr.sh >/dev/null
 
-after_count="$(ls -1 "$worktree_tmp"/pr_*.md 2>/dev/null | wc -l)"
+after_count="$(find "$worktree_tmp" -maxdepth 1 -type f -name 'pr_*.md' | wc -l)"
 if [[ "$after_count" -lt "$before_count" ]]; then
   echo "pr-draft generation did not produce expected artifact" >&2
   exit 1
