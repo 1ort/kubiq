@@ -7,6 +7,16 @@ if [[ -z "$branch" ]]; then
   exit 1
 fi
 
+if [[ -z "$(git symbolic-ref --short -q HEAD)" ]]; then
+  echo "detached HEAD is not supported for push; checkout a branch first" >&2
+  exit 1
+fi
+
+if [[ "$branch" == "master" || "$branch" == "main" ]]; then
+  echo "refusing to push protected branch '$branch' via helper script" >&2
+  exit 1
+fi
+
 git push -u origin "$branch"
 
 echo "If this is a feature branch, open PR at:"

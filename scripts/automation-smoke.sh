@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[1/5] shell syntax checks"
+echo "[1/6] shell syntax checks"
 bash -n \
   scripts/docs-check.sh \
   scripts/verify.sh \
+  scripts/hygiene-smoke.sh \
   scripts/git/feature.sh \
   scripts/git/ship.sh \
   scripts/git/push.sh \
   scripts/git/sync_master.sh \
   scripts/pr/generate_pr.sh
 
-echo "[2/5] PR draft generation smoke"
+echo "[2/6] PR draft generation smoke"
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp_dir"
@@ -30,7 +31,7 @@ if [[ "$after_count" -lt "$before_count" ]]; then
   exit 1
 fi
 
-echo "[3/5] ship guard blocks protected branch"
+echo "[3/6] ship guard blocks protected branch"
 mkdir -p "$tmp_dir/scripts/git"
 cp scripts/git/ship.sh "$tmp_dir/scripts/git/ship.sh"
 chmod +x "$tmp_dir/scripts/git/ship.sh"
@@ -44,7 +45,7 @@ chmod +x "$tmp_dir/scripts/git/ship.sh"
   fi
 )
 
-echo "[4/5] feature guard blocks dirty tree"
+echo "[4/6] feature guard blocks dirty tree"
 mkdir -p "$tmp_dir/feature_test/scripts/git"
 cp scripts/git/feature.sh "$tmp_dir/feature_test/scripts/git/feature.sh"
 chmod +x "$tmp_dir/feature_test/scripts/git/feature.sh"
@@ -59,7 +60,10 @@ chmod +x "$tmp_dir/feature_test/scripts/git/feature.sh"
   fi
 )
 
-echo "[5/5] justfile parse smoke"
+echo "[5/6] hygiene smoke checks"
+./scripts/hygiene-smoke.sh
+
+echo "[6/6] justfile parse smoke"
 if command -v just >/dev/null; then
   just --list >/dev/null
 fi

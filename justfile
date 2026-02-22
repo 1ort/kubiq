@@ -16,6 +16,9 @@ verify:
 automation-smoke:
 	./scripts/automation-smoke.sh
 
+hygiene-check:
+	./scripts/hygiene-smoke.sh
+
 docs-check:
 	./scripts/docs-check.sh
 
