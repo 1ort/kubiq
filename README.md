@@ -162,6 +162,23 @@ cargo test -q
 cargo run -- --help
 ```
 
+## Developer Automation (Recommended)
+
+Use `just` as the single entry point for common local workflows:
+
+```bash
+cargo install just
+just bootstrap
+just verify
+just feature v0.3-discovery-cache
+just ship "feat: add discovery cache"
+just push
+just pr-draft feat "add discovery cache" "k8s"
+just sync-master feature/v0.3-discovery-cache
+```
+
+See full details in `docs/development/workflow.md`.
+
 ## Architecture (High Level)
 
 `CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> (Aggregate | Sort) -> Projection -> Output`
