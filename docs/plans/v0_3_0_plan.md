@@ -2,7 +2,7 @@
 
 Цель `v0.3.0`: закрыть Milestone 11 "Reliability hardening" из `docs/plans/roadmap_v1.md` и закрыть P1 technical debt из `docs/plans/tech_debt.md`.
 
-Статус: **planned**.
+Статус: **in progress** (`Epic 1` completed; `Epic 2-5` planned).
 
 В релиз входят 5 направлений:
 1. Async-first execution path (без runtime-per-request)
@@ -20,12 +20,19 @@
 ## Epic 1 - Async-first execution path
 
 Рекомендуемая ветка: `feature/v0.3-async-first-runtime`
+Статус: **completed**.
+
+Результат:
+- Добавлен async-first API в K8s слое: `list_async(...)`.
+- Основной CLI pipeline переведен на async execution.
+- Runtime инициализируется один раз на процесс в бинарнике (process-wide Tokio runtime через `Runtime::new()`), без runtime-per-request в hot path `list`.
+- Sync entrypoints сохранены как thin compatibility wrappers.
 
 ### Tasks
 1. API and runtime model
 - Добавить async-first API в K8s слое: `list_async(...)`.
 - Перевести основной CLI pipeline на async execution.
-- Инициализировать runtime один раз на процесс (через `#[tokio::main]` в бинарнике).
+- Инициализировать runtime один раз на процесс в бинарнике (допустимы `#[tokio::main]` или эквивалентный process-wide runtime).
 - Убрать `Runtime::new()` из hot path list-запросов.
 
 2. Compatibility
@@ -34,7 +41,7 @@
 
 3. Validation
 - Добавить unit/integration тесты на отсутствие runtime-per-request поведения.
-- Проверить отсутствие регрессий для `where/select/order by/aggregation`.
+- Проверить отсутствие регрессий для `where/select/order by/aggregation` (текущее состояние: green unit suite).
 
 ### Definition of Done
 - Runtime инициализируется один раз на процесс.
