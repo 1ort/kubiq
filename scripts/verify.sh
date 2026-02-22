@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[1/3] rustfmt --check (changed files only)"
+echo "[1/4] rustfmt --check (changed files only)"
 base_ref="${VERIFY_BASE_REF:-origin/master}"
 if git rev-parse --verify --quiet "$base_ref" >/dev/null; then
   mapfile -t rs_files < <(git diff --name-only --diff-filter=ACMRT "${base_ref}...HEAD" -- '*.rs')
@@ -15,10 +15,13 @@ else
   echo "no changed Rust files; skipping rustfmt check"
 fi
 
-echo "[2/3] cargo clippy --all-targets --all-features -- -D warnings"
+echo "[2/4] cargo clippy --all-targets --all-features -- -D warnings"
 cargo clippy --all-targets --all-features -- -D warnings
 
-echo "[3/3] cargo test"
+echo "[3/4] cargo test"
 cargo test
+
+echo "[4/4] docs consistency checks"
+./scripts/docs-check.sh
 
 echo "verify: OK"
