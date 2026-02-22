@@ -55,19 +55,19 @@ pub fn list(
     resource: &str,
     options: &ListQueryOptions,
 ) -> Result<ListResult, K8sError> {
+    let runtime = Runtime::new().map_err(|source| K8sError::RuntimeInit { source })?;
+    runtime.block_on(list_async(resource, options))
+}
+
+pub async fn list_async(
+    resource: &str,
+    options: &ListQueryOptions,
+) -> Result<ListResult, K8sError> {
     let resource = resource.trim();
     if resource.is_empty() {
         return Err(K8sError::EmptyResourceName);
     }
 
-    let runtime = Runtime::new().map_err(|source| K8sError::RuntimeInit { source })?;
-    runtime.block_on(async_list(resource, options))
-}
-
-async fn async_list(
-    resource: &str,
-    options: &ListQueryOptions,
-) -> Result<ListResult, K8sError> {
     let config = Config::infer()
         .await
         .map_err(|source| K8sError::ConfigInfer {
@@ -362,7 +362,7 @@ mod tests {
 
     use super::{
         K8sDiagnostic, ListErrorClass, ListQueryOptions, MAX_LIST_PAGES, SelectorFallbackReason,
-        build_list_params, classify_list_error, ensure_page_limit, flatten_value,
+        build_list_params, classify_list_error, ensure_page_limit, flatten_value, list_async,
         next_continue_token, should_retry_without_selectors,
     };
     use crate::error::K8sError;
@@ -472,6 +472,13 @@ mod tests {
     #[test]
     fn empty_resource_name_is_typed_error() {
         let result = super::list("  ", &ListQueryOptions::default());
+        assert!(matches!(result, Err(K8sError::EmptyResourceName)));
+    }
+
+    #[test]
+    fn empty_resource_name_is_typed_error_async() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime init must succeed");
+        let result = runtime.block_on(list_async("  ", &ListQueryOptions::default()));
         assert!(matches!(result, Err(K8sError::EmptyResourceName)));
     }
 
