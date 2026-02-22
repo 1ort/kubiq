@@ -50,6 +50,7 @@ KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
 ```bash
 just bootstrap
 just verify
+just docs-check
 just feature v0.3-discovery-cache
 just ship "feat: add discovery cache"
 just push

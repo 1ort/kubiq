@@ -16,6 +16,9 @@ verify:
 automation-smoke:
 	./scripts/automation-smoke.sh
 
+docs-check:
+	./scripts/docs-check.sh
+
 verify-fast:
 	cargo test -q
 

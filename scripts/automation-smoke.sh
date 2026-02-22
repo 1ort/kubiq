@@ -3,6 +3,7 @@ set -euo pipefail
 
 echo "[1/5] shell syntax checks"
 bash -n \
+  scripts/docs-check.sh \
   scripts/verify.sh \
   scripts/git/feature.sh \
   scripts/git/ship.sh \
