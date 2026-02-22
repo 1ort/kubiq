@@ -170,6 +170,7 @@ Use `just` as the single entry point for common local workflows:
 cargo install just
 just bootstrap
 just verify
+just hygiene-check
 just feature v0.3-discovery-cache
 just ship "feat: add discovery cache"
 just push

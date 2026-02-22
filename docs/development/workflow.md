@@ -59,6 +59,7 @@ just sync-master feature/v0.3-discovery-cache
 - `just bootstrap` - check required tools.
 - `just verify` - rustfmt check on changed `.rs` files + clippy + tests.
 - `just automation-smoke` - smoke checks for automation scripts and guards.
+- `just hygiene-check` - git workflow hygiene smoke checks.
 - `just docs-check` - docs/workflow consistency checks.
 - `just verify-fast` - quick local test pass.
 - `just e2e` - run minikube e2e test suite.
@@ -72,10 +73,18 @@ just sync-master feature/v0.3-discovery-cache
 ## Guardrails
 
 - `just ship` refuses to run on `master`/`main`.
+- `just push` refuses to run on `master`/`main` and detached HEAD.
 - `just feature` and `just sync-master` require a clean working tree.
+- `just sync-master` deletes only merged branches; unmerged branches are kept.
 - Optional file-scope guard for `just ship`:
   - `EXPECTED_FILES` can define allowed changed files.
   - Use `ALLOW_EXTRA=1` only when intentional.
+
+## GitHub integration policy
+
+- Project scripts and `just` recipes do not call GitHub CLI/API directly.
+- `just push` may print an URL hint for manual PR opening.
+- Agent-level GitHub automation (for example `gh pr create`, CI triage) stays outside project scripts.
 
 ## CI alignment
 
