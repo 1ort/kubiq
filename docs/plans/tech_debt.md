@@ -49,3 +49,4 @@
 - `engine` отвязан от `parser` типов: `engine::QueryPlan` хранит engine-owned типы, AST конвертируется на CLI boundary
 - Async-first K8s path: добавлен `k8s::list_async`, CLI переведен на async execution, `main` использует единый process-wide Tokio runtime
 - Добавлен discovery/resource-resolution cache (`resource -> ApiResource`) с TTL, invalidation и typed stale-resolution retry
+- Добавлена defaults-only retry/backoff/timeout policy с typed retry classification и финальной retry-summary диагностикой

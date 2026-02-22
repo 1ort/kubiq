@@ -56,9 +56,17 @@ pub async fn run_async() -> Result<(), CliError> {
         }
     }
 
-    let list_result = k8s::list_async(&args.resource, &pushdown_plan.options)
-        .await
-        .map_err(CliError::K8s)?;
+    let list_result = match k8s::list_async(&args.resource, &pushdown_plan.options).await {
+        Ok(result) => result,
+        Err(error) => {
+            if !args.no_pushdown_warnings
+                && let Some(diagnostic) = k8s::retry_summary_diagnostic(&error)
+            {
+                eprintln!("{}", format_k8s_diagnostic(&diagnostic));
+            }
+            return Err(CliError::K8s(error));
+        }
+    };
     if !args.no_pushdown_warnings {
         for diagnostic in &list_result.diagnostics {
             eprintln!("{}", format_k8s_diagnostic(diagnostic));
@@ -240,6 +248,17 @@ fn format_k8s_diagnostic(diagnostic: &k8s::K8sDiagnostic) -> String {
                 attempted.label_selector
             )
         }
+        k8s::K8sDiagnostic::RetrySummary {
+            stage,
+            attempts,
+            reason,
+            final_error,
+        } => {
+            format!(
+                "[retry] stage={} attempts={} stop_reason={} final_error={}",
+                stage, attempts, reason, final_error
+            )
+        }
     }
 }
 
@@ -270,7 +289,7 @@ fn format_operator(operator: &parser::Operator) -> &'static str {
 mod tests {
     use clap::Parser;
 
-    use crate::error::{CliError, K8sError, OutputError, boxed_error};
+    use crate::error::{CliError, K8sError, OutputError, RetryErrorKind, RetryStopReason, boxed_error};
 
     use super::{
         CliArgs, OutputArg, ast_to_engine_plan, format_k8s_diagnostic, format_planner_diagnostic,
@@ -555,5 +574,21 @@ mod tests {
         let rendered = format_k8s_diagnostic(&diagnostic);
         assert!(rendered.contains("retried without selectors"));
         assert!(rendered.contains("metadata.namespace=demo-a"));
+    }
+
+    #[test]
+    fn formats_retry_summary_diagnostics() {
+        let diagnostic = K8sDiagnostic::RetrySummary {
+            stage: "list",
+            attempts: 3,
+            reason: RetryStopReason::RetryCapReached,
+            final_error: RetryErrorKind::RequestTimeout,
+        };
+
+        let rendered = format_k8s_diagnostic(&diagnostic);
+        assert!(rendered.contains("stage=list"));
+        assert!(rendered.contains("attempts=3"));
+        assert!(rendered.contains("retry cap reached"));
+        assert!(rendered.contains("request timeout"));
     }
 }

@@ -2,7 +2,7 @@
 
 Цель `v0.3.0`: закрыть Milestone 11 "Reliability hardening" из `docs/plans/roadmap_v1.md` и закрыть P1 technical debt из `docs/plans/tech_debt.md`.
 
-Статус: **in progress** (`Epic 1` and `Epic 3` completed; `Epic 2/4/5` planned).
+Статус: **in progress** (`Epic 1/2/3` completed; `Epic 4/5` planned).
 
 В релиз входят 5 направлений:
 1. Async-first execution path (без runtime-per-request)
@@ -50,6 +50,13 @@
 ## Epic 2 - Retry/backoff/timeout policy
 
 Рекомендуемая ветка: `feature/v0.3-retry-timeout-policy`
+Статус: **completed**.
+
+Результат:
+- Добавлена встроенная defaults-only policy: bounded retries + exponential backoff + request timeout.
+- Retry применяется только для transient веток (`transport`, timeout, `429`, `5xx`), non-retryable ошибки завершаются немедленно.
+- Добавлена итоговая retry-диагностика в stderr (final summary) без шумного по-попыточного логирования.
+- Поведение покрыто unit-тестами на retry branches, retry cap, timeout path и non-retryable scenarios.
 
 ### Tasks
 1. Policy
