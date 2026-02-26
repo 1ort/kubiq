@@ -70,6 +70,12 @@ Options:
 
 ![kubiq --help terminal preview](docs/screenshots/kubiq-help.png)
 
+## Query Screenshots
+
+![kubiq query screenshot 1](docs/screenshots/kubiq1.png)
+![kubiq query screenshot 2](docs/screenshots/kubiq2.png)
+![kubiq query screenshot 3](docs/screenshots/kubiq3.png)
+
 ## Examples
 
 ```bash
