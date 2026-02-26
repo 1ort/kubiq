@@ -34,7 +34,13 @@ Current release baseline: `v0.3.0`.
 - `kubectl`
 - Access to a Kubernetes cluster
 
-### Build
+### Install
+
+```bash
+cargo install --git https://github.com/1ort/kubiq kubiq
+```
+
+### Build from source
 
 ```bash
 cargo build --release
@@ -59,6 +65,10 @@ Options:
 - `--no-pushdown-warnings`: suppress pushdown/fallback warnings in stderr
 - `-h, --help`: show help
 - `-V, --version`: show version
+
+## CLI Preview
+
+![kubiq --help terminal preview](docs/screenshots/kubiq-help.png)
 
 ## Examples
 
