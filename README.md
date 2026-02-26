@@ -1,38 +1,32 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Kubiq logo" width="320" />
+</p>
+
+<p align="center">
+  SQL-like queries for any Kubernetes resource.
+</p>
+
 # Kubiq
 
-A lightweight CLI to run SQL-like queries against the Kubernetes API (core resources and CRDs).
+Kubiq is a lightweight CLI to run SQL-like queries against the Kubernetes API.
+It works with both core resources and CRDs through a single query interface.
 
-## Release Status
+## Current Status
 
-**Current release baseline: `v0.2.0`**.
-
-MVP (`v0.1.0`) is complete, and milestone `v0.2.x` query-completeness features are available.
-
-Implemented:
-
-- Dynamic resource discovery (core + CRD)
-- `list` queries
-- Automatic pagination/batching for large `list` responses
-- `where` filtering with `==`, `!=`, `AND`
-- `order by` sorting with multi-key support and `asc|desc`
-- Best-effort server-side filter pushdown for technically feasible subset of `where` (`==`/`!=` on `metadata.name`, `metadata.namespace`, `metadata.labels.*`)
-- `select` projection
-- Global aggregations in `select` (`count`, `sum`, `min`, `max`, `avg`) without `group by`
-- Output formats: `table`, `json`, `yaml`
-- Default summary output (`name` only)
-- Full output via `--describe`
-- End-to-end tests on Minikube
-- Typed error hierarchy with actionable CLI tips (`CliError`/`K8sError`/`EngineError`/`OutputError`)
+Current release baseline: `v0.3.0`.
 
 ## Features
 
-- Works with any plural Kubernetes resource name (`pods`, `deployments`, `widgets`, ...)
-- Typed predicate values (`bool`, `number`, `string`)
-- Nested reconstruction for `describe` and parent `select` paths (for example `select metadata`)
-- Helpful CLI diagnostics (`--help`, `--version`, actionable error tips)
-- Pushdown transparency via stderr warnings for non-pushable predicates and selector fallback
+- Query any plural Kubernetes resource (`pods`, `deployments`, `widgets`, ...)
+- `where` filtering with `==`, `!=`, and `AND`
+- `select` projection for specific fields
+- Global aggregations in `select`: `count`, `sum`, `min`, `max`, `avg`
+- `order by` with multi-key sorting and `asc|desc`
+- Best-effort server-side filter pushdown for supported predicates
+- Output formats: `table`, `json`, `yaml`
+- Summary mode by default and full object output with `--describe`
 
-## Installation
+## Quick Start
 
 ### Prerequisites
 
@@ -46,10 +40,10 @@ Implemented:
 cargo build --release
 ```
 
-Run from source:
+### Run
 
 ```bash
-cargo run -- <args>
+cargo run -- <query args>
 ```
 
 ## Usage
@@ -66,43 +60,6 @@ Options:
 - `-h, --help`: show help
 - `-V, --version`: show version
 
-## Query Language
-
-### Where
-
-- Operators: `==`, `!=`
-- Logical conjunction: `AND`
-
-Semantics:
-
-- Missing field -> `false`
-- Type mismatch -> `false`
-- `null` in comparison -> `false`
-
-### Select
-
-- Limits output to selected fields
-- Supports comma or whitespace-separated paths
-- Parent path selection reconstructs nested output (`select metadata`)
-
-### Aggregation
-
-- Supported aggregate expressions in `select`:
-  - `count(*)`
-  - `count(path)`
-  - `sum(path)`, `min(path)`, `max(path)`, `avg(path)`
-- Aggregation returns a single aggregated row
-- In v0.2 baseline:
-  - `order by` is not supported with aggregation
-  - `--describe` is not supported with aggregation
-  - projection paths and aggregations cannot be mixed in one `select`
-
-### Order by
-
-- Sorts filtered objects before output
-- Supports multi-key sorting (`order by spec.priority desc, metadata.name asc`)
-- Default direction is `asc`
-
 ## Examples
 
 ```bash
@@ -115,9 +72,6 @@ kubiq pods where metadata.namespace == demo-a select metadata.name,metadata.name
 # Filter + sorting
 kubiq pods where metadata.namespace == demo-a order by metadata.name desc
 
-# Parent projection (nested object in json/yaml)
-kubiq -o json pods where metadata.name == worker-a select metadata
-
 # Full nested output
 kubiq -o yaml -d pods where metadata.name == worker-a
 
@@ -129,84 +83,14 @@ kubiq -o json pods where metadata.namespace == demo-a select count(*)
 kubiq -o json pods where metadata.namespace == demo-a select sum(metadata.generation),avg(metadata.generation)
 ```
 
-## Local E2E Test Cluster (Minikube)
-
-Start a clean local cluster with fixtures:
-
-```bash
-./scripts/minikube-up.sh
-```
-
-Re-apply fixtures:
-
-```bash
-./scripts/minikube-reset-data.sh
-```
-
-Delete the cluster:
-
-```bash
-./scripts/minikube-down.sh
-```
-
-Run end-to-end tests:
-
-```bash
-KUBIQ_E2E=1 cargo test --test e2e_minikube -- --nocapture
-```
-
-## Development Checks
-
-```bash
-cargo test -q
-cargo run -- --help
-```
-
-## Developer Automation (Recommended)
-
-Use `just` as the single entry point for common local workflows:
-
-```bash
-cargo install just
-just bootstrap
-just verify
-just hygiene-check
-just feature v0.3-discovery-cache
-just ship "feat: add discovery cache"
-just push
-just pr-draft feat "add discovery cache" "k8s"
-just sync-master feature/v0.3-discovery-cache
-```
-
-See full details in `docs/development/workflow.md`.
-
-## Architecture (High Level)
-
-`CLI -> Parser (nom) -> AST -> QueryPlan -> K8s discovery/paged-list -> Evaluator -> (Aggregate | Sort) -> Projection -> Output`
-
-## Project Layout
-
-```text
-src/
-  cli/
-  parser/
-  engine/
-  error.rs
-  k8s/
-  output/
-  dynamic_object.rs
-tests/
-  e2e_minikube.rs
-```
-
 ## Documentation
 
-See `docs/` for full details:
+- [Documentation Overview](docs/overview.md)
+- [CLI Specification](docs/product/cli_spec.md)
+- [Query Language Semantics](docs/query_language/semantics.md)
+- [Setup (contributors)](docs/development/setup.md)
+- [Development Workflow (contributors)](docs/development/workflow.md)
 
-- `docs/overview.md`
-- `docs/documentation_policy.md`
-- `docs/product/cli_spec.md`
-- `docs/query_language/grammar.md`
-- `docs/query_language/semantics.md`
-- `docs/development/testing.md`
-- `docs/plans/roadmap_v1.md`
+## Contributing
+
+Contributor workflow, testing, and automation details are documented in `docs/development/*`.
